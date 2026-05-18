@@ -1,7 +1,9 @@
-name: Daily Release
+name: Release
 
 on:
-  workflow_dispatch:
+  push:
+    tags:
+      - 'v*.*.*'
 
 permissions:
   contents: write
@@ -12,62 +14,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check for changes since last tag
-        id: changes
-        run: |
-          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          if [ -z "$LAST_TAG" ]; then
-            echo "changed=true" >> $GITHUB_OUTPUT
-          else
-            CHANGES=$(git diff --name-only $LAST_TAG HEAD -- \
-              '*.php' '*.js' '*.css' 'README.md' 'CHANGELOG.md')
-            if [ -z "$CHANGES" ]; then
-              echo "changed=false" >> $GITHUB_OUTPUT
-              echo "No changes since $LAST_TAG — skipping release"
-            else
-              echo "changed=true" >> $GITHUB_OUTPUT
-            fi
-          fi
-
-      - name: Get current version
-        if: steps.changes.outputs.changed == 'true'
+      - name: Extract version from tag
         id: version
-        run: |
-          CURRENT=$(grep -oP "(?<=Version:\s{5})\d+\.\d+\.\d+" \
-            wp-rest-importer.php)
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-          NEW="$MAJOR.$MINOR.$((PATCH + 1))"
-          echo "current=$CURRENT" >> $GITHUB_OUTPUT
-          echo "new=$NEW" >> $GITHUB_OUTPUT
-          echo "Bumping $CURRENT → $NEW"
-
-      - name: Bump version in plugin file
-        if: steps.changes.outputs.changed == 'true'
-        run: |
-          sed -i "s/Version:     ${{ steps.version.outputs.current }}/Version:     ${{ steps.version.outputs.new }}/" \
-            wp-rest-importer.php
-
-      - name: Commit version bump
-        if: steps.changes.outputs.changed == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add wp-rest-importer.php
-          git commit -m "chore: bump version to ${{ steps.version.outputs.new }}"
-          git push
-
-      - name: Create tag
-        if: steps.changes.outputs.changed == 'true'
-        run: |
-          git tag v${{ steps.version.outputs.new }}
-          git push origin v${{ steps.version.outputs.new }}
+        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
 
       - name: Create plugin zip
-        if: steps.changes.outputs.changed == 'true'
         run: |
           mkdir -p /tmp/wp-rest-importer
           rsync -av --exclude='.git' \
@@ -87,13 +39,12 @@ jobs:
           mv wp-rest-importer.zip $GITHUB_WORKSPACE/
 
       - name: Create GitHub Release
-        if: steps.changes.outputs.changed == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.new }}
-          name: WP REST Importer v${{ steps.version.outputs.new }}
+          tag_name: ${{ github.ref_name }}
+          name: WP REST Importer v${{ steps.version.outputs.version }}
           body: |
-            ## WP REST Importer v${{ steps.version.outputs.new }}
+            ## WP REST Importer v${{ steps.version.outputs.version }}
 
             Import posts, pages, media, categories, tags and authors
             from any public WordPress site via REST API.
