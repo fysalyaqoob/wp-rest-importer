@@ -1,0 +1,14 @@
+.claude/
+.DS_Store
+Thumbs.db
+*.log
+*.zip
+*.bak
+*.swp
+.env
+.env.*
+/node_modules
+/vendor
+/.wordpress-org
+/upgrade
+/wp-rest-importer.zip

@@ -1,0 +1,891 @@
+/* =======================================================================
+   WP REST Importer Admin UI — all rules scoped to #wpresti-wrap
+   ======================================================================= */
+
+#wpresti-wrap *,
+#wpresti-wrap *::before,
+#wpresti-wrap *::after {
+	box-sizing: border-box;
+}
+
+#wpresti-wrap {
+	max-width: 1160px;
+	margin-top: 0;
+	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+		Oxygen-Sans, Ubuntu, Cantarell, sans-serif;
+	color: #1d2327;
+	font-size: 13px;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────── */
+
+.pp-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 20px 0 18px;
+	border-bottom: 1px solid #e2e4e7;
+}
+
+.pp-header-brand {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.pp-wordmark {
+	font-size: 17px;
+	font-weight: 700;
+	letter-spacing: -0.03em;
+	color: #1d2327;
+	line-height: 1;
+}
+
+.pp-version-badge {
+	font-size: 10px;
+	font-weight: 700;
+	color: #646970;
+	background: #f0f0f1;
+	padding: 3px 7px;
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
+	line-height: 1;
+}
+
+.pp-header-links {
+	display: flex;
+	align-items: center;
+	gap: 18px;
+}
+
+.pp-header-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 12px;
+	font-weight: 500;
+	color: #646970;
+	text-decoration: none;
+	transition: color 150ms ease;
+}
+
+.pp-header-link:hover {
+	color: #2271b1;
+	text-decoration: none;
+}
+
+.pp-header-link .dashicons {
+	font-size: 13px;
+	width: 13px;
+	height: 13px;
+	line-height: 1;
+}
+
+/* ── Tab nav ─────────────────────────────────────────────────────────── */
+
+.pp-tab-nav {
+	display: flex;
+	align-items: flex-end;
+	border-bottom: 1px solid #e2e4e7;
+	margin: 0;
+	padding: 0;
+	background: transparent;
+}
+
+/* Override WP's nav-tab defaults inside our wrap */
+#wpresti-wrap .pp-tab-nav a.nav-tab {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 14px 18px 12px;
+	font-size: 13px;
+	font-weight: 500;
+	color: #646970;
+	background: transparent;
+	border: none;
+	border-bottom: 2px solid transparent;
+	margin: 0;
+	text-decoration: none;
+	line-height: 1.3;
+	cursor: pointer;
+	transition: color 150ms ease, border-color 150ms ease;
+	position: relative;
+	top: 1px;
+}
+
+#wpresti-wrap .pp-tab-nav a.nav-tab:hover {
+	color: #1d2327;
+	background: transparent;
+	border-bottom-color: #c3c4c7;
+}
+
+#wpresti-wrap .pp-tab-nav a.nav-tab.nav-tab-active {
+	color: #1d2327;
+	font-weight: 600;
+	border-bottom-color: #1d2327;
+	background: transparent;
+}
+
+.pp-tab-nav .nav-tab .dashicons {
+	font-size: 15px;
+	width: 15px;
+	height: 15px;
+	line-height: 1;
+	flex-shrink: 0;
+}
+
+/* ── Tab panels ──────────────────────────────────────────────────────── */
+
+.pp-tab-panel {
+	padding-top: 24px;
+}
+
+/* ── Credentials info notice ─────────────────────────────────────────── */
+
+.pp-creds-notice {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 10px 14px;
+	margin-bottom: 20px;
+	background: #f0f5fc;
+	border-left: 3px solid #2271b1;
+	font-size: 13px;
+	color: #1d2327;
+	line-height: 1.5;
+}
+
+.pp-creds-notice-icon {
+	color: #2271b1;
+	flex-shrink: 0;
+	margin-top: 1px;
+	font-size: 16px;
+	width: 16px;
+	height: 16px;
+}
+
+.pp-creds-notice-text {
+	flex: 1;
+	min-width: 0;
+}
+
+.pp-notice-dismiss {
+	margin-left: auto;
+	background: none;
+	border: none;
+	cursor: pointer;
+	padding: 0;
+	color: #646970;
+	flex-shrink: 0;
+	line-height: 1;
+	display: flex;
+	align-items: center;
+}
+
+.pp-notice-dismiss:hover {
+	color: #1d2327;
+}
+
+.pp-notice-dismiss .dashicons {
+	font-size: 16px;
+	width: 16px;
+	height: 16px;
+	line-height: 1;
+}
+
+/* ── Import two-column layout ────────────────────────────────────────── */
+
+.pp-import-layout {
+	display: flex;
+	align-items: flex-start;
+	gap: 20px;
+}
+
+.pp-col-config {
+	width: 40%;
+	flex-shrink: 0;
+}
+
+.pp-col-status {
+	flex: 1;
+	min-width: 0;
+}
+
+/* ── Card ────────────────────────────────────────────────────────────── */
+
+.pp-card {
+	background: #fff;
+	border: 1px solid #e2e4e7;
+	padding: 24px;
+}
+
+.pp-card-heading {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.07em;
+	color: #646970;
+	margin: 0 0 22px;
+	padding: 0;
+}
+
+.pp-card-heading .dashicons {
+	font-size: 14px;
+	width: 14px;
+	height: 14px;
+	line-height: 1;
+	color: #8c8f94;
+}
+
+/* ── Form fields ─────────────────────────────────────────────────────── */
+
+.pp-field {
+	margin-bottom: 16px;
+}
+
+.pp-field:last-of-type {
+	margin-bottom: 22px;
+}
+
+.pp-field-no-margin {
+	margin-bottom: 0;
+}
+
+.pp-label {
+	display: block;
+	font-size: 12px;
+	font-weight: 600;
+	color: #1d2327;
+	margin-bottom: 6px;
+	letter-spacing: 0.01em;
+}
+
+.pp-input,
+.pp-select {
+	display: block;
+	width: 100%;
+	height: 36px;
+	padding: 0 12px;
+	border: 1px solid #c3c4c7;
+	border-radius: 0;
+	background: #fff;
+	font-size: 13px;
+	font-family: inherit;
+	color: #1d2327;
+	outline: none;
+	transition: border-color 150ms ease, box-shadow 150ms ease;
+	appearance: none;
+	-webkit-appearance: none;
+}
+
+.pp-input:focus,
+.pp-select:focus {
+	border-color: #2271b1;
+	box-shadow: 0 0 0 2px rgba(34, 113, 177, 0.18);
+}
+
+.pp-input-mono {
+	font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+	font-size: 12px;
+	letter-spacing: -0.01em;
+}
+
+.pp-select {
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238c8f94'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: right 11px center;
+	padding-right: 30px;
+	cursor: pointer;
+}
+
+/* ── Advanced Settings (collapsible) ─────────────────────────────────── */
+
+.pp-advanced-details {
+	border: 1px solid #e2e4e7;
+	margin-bottom: 20px;
+}
+
+.pp-advanced-summary {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 9px 12px;
+	font-size: 12px;
+	font-weight: 600;
+	color: #646970;
+	cursor: pointer;
+	list-style: none;
+	-webkit-user-select: none;
+	user-select: none;
+	background: #f6f7f7;
+	transition: color 150ms ease, background 150ms ease;
+}
+
+.pp-advanced-summary::-webkit-details-marker {
+	display: none;
+}
+
+.pp-advanced-summary::marker {
+	display: none;
+}
+
+.pp-advanced-summary:hover {
+	color: #1d2327;
+	background: #f0f0f1;
+}
+
+.pp-advanced-summary .dashicons {
+	font-size: 14px;
+	width: 14px;
+	height: 14px;
+	line-height: 1;
+	flex-shrink: 0;
+}
+
+.pp-advanced-arrow {
+	margin-left: auto;
+	width: 0;
+	height: 0;
+	border: 4px solid transparent;
+	border-top-color: #646970;
+	margin-top: 3px;
+	flex-shrink: 0;
+}
+
+details[open] .pp-advanced-arrow {
+	border-top-color: transparent;
+	border-bottom-color: #646970;
+	margin-top: -3px;
+}
+
+.pp-advanced-body {
+	padding: 14px 12px;
+	border-top: 1px solid #e2e4e7;
+}
+
+.pp-advanced-section-label {
+	font-size: 12px;
+	font-weight: 600;
+	color: #1d2327;
+	margin: 0 0 4px;
+}
+
+.pp-advanced-hint {
+	font-size: 12px;
+	color: #646970;
+	margin: 0 0 14px;
+	line-height: 1.5;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────── */
+
+.pp-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 7px;
+	height: 36px;
+	padding: 0 16px;
+	font-size: 13px;
+	font-weight: 600;
+	font-family: inherit;
+	border: none;
+	border-radius: 0;
+	cursor: pointer;
+	text-decoration: none;
+	transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
+	white-space: nowrap;
+	line-height: 1;
+}
+
+.pp-btn .dashicons {
+	font-size: 16px;
+	width: 16px;
+	height: 16px;
+	line-height: 1;
+	flex-shrink: 0;
+}
+
+.pp-btn-primary {
+	background: #1d2327;
+	color: #fff;
+}
+
+.pp-btn-primary:hover,
+.pp-btn-primary:focus {
+	background: #2271b1;
+	color: #fff;
+	text-decoration: none;
+	outline: none;
+}
+
+.pp-btn-secondary {
+	background: #fff;
+	color: #1d2327;
+	border: 1px solid #c3c4c7;
+}
+
+.pp-btn-secondary:hover,
+.pp-btn-secondary:focus {
+	background: #f6f7f7;
+	border-color: #8c8f94;
+	color: #1d2327;
+	text-decoration: none;
+	outline: none;
+}
+
+.pp-btn-block {
+	width: 100%;
+}
+
+.pp-btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+	pointer-events: none;
+}
+
+/* ── Progress section ────────────────────────────────────────────────── */
+
+.pp-progress-section {
+	padding-bottom: 20px;
+	margin-bottom: 20px;
+	border-bottom: 1px solid #f0f0f1;
+}
+
+.pp-progress-top {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 10px;
+}
+
+.pp-progress-label {
+	font-size: 13px;
+	font-weight: 500;
+	color: #1d2327;
+}
+
+.pp-progress-wrap {
+	width: 100%;
+}
+
+.pp-progress-bar-outer {
+	width: 100%;
+	height: 6px;
+	background: #f0f0f1;
+	overflow: hidden;
+}
+
+.pp-progress-bar-inner {
+	height: 100%;
+	width: 0%;
+	background: #2271b1;
+	transition: width 300ms ease;
+}
+
+.pp-progress-bar-inner.pp-complete {
+	background: #00a32a;
+}
+
+/* Spin animation for the progress indicator */
+@keyframes pp-rotate {
+	from { transform: rotate(0deg); }
+	to   { transform: rotate(360deg); }
+}
+
+.pp-spin {
+	display: inline-block;
+	animation: pp-rotate 0.9s linear infinite;
+	color: #2271b1;
+}
+
+/* ── Inline notices (JS sets class="notice notice-{type}") ───────────── */
+
+#wpresti-wrap .notice,
+#wpresti-wrap #pp-reassign-notice {
+	display: block;
+	padding: 10px 14px;
+	margin: 14px 0 0;
+	font-size: 13px;
+	border: none;
+	border-left: 3px solid #c3c4c7;
+	background: #f6f7f7;
+	color: #1d2327;
+	box-shadow: none;
+}
+
+#wpresti-wrap .notice p,
+#wpresti-wrap #pp-reassign-notice p {
+	margin: 0;
+	padding: 0;
+}
+
+#wpresti-wrap .notice.notice-info    { border-left-color: #2271b1; background: #f0f5fc; }
+#wpresti-wrap .notice.notice-success { border-left-color: #00a32a; background: #edfaef; }
+#wpresti-wrap .notice.notice-warning { border-left-color: #dba617; background: #fef9ec; }
+#wpresti-wrap .notice.notice-error   { border-left-color: #d63638; background: #fce8e8; }
+
+/* Reassign result notice uses same left-border style */
+#wpresti-wrap #pp-reassign-notice {
+	border-left-color: #2271b1;
+	background: #f0f5fc;
+}
+
+/* ── Log section ─────────────────────────────────────────────────────── */
+
+.pp-log-section {
+	margin-top: 20px;
+}
+
+.pp-section-heading {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.07em;
+	color: #646970;
+	margin-bottom: 10px;
+}
+
+.pp-section-heading .dashicons {
+	font-size: 13px;
+	width: 13px;
+	height: 13px;
+	line-height: 1;
+}
+
+/* ── Warning card ────────────────────────────────────────────────────── */
+
+.pp-warning-card {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	border-left: 3px solid #dba617;
+	background: #fef9ec;
+	padding: 12px 16px;
+	font-size: 13px;
+	color: #1d2327;
+	line-height: 1.55;
+	margin-top: 20px;
+}
+
+/* When no content is above the warning card (status area hidden), remove top margin */
+#pp-status-area[style*="display:none"] + .pp-warning-card,
+#pp-status-area[style*="display: none"] + .pp-warning-card {
+	margin-top: 0;
+}
+
+.pp-warning-card .dashicons {
+	color: #dba617;
+	font-size: 16px;
+	width: 16px;
+	height: 16px;
+	flex-shrink: 0;
+	margin-top: 2px;
+}
+
+.pp-warning-body strong {
+	font-weight: 600;
+}
+
+/* ── Table ───────────────────────────────────────────────────────────── */
+
+.pp-table-scroll {
+	overflow-x: auto;
+	-webkit-overflow-scrolling: touch;
+}
+
+.pp-log-scroll {
+	max-height: 390px;
+	overflow-y: auto;
+}
+
+.pp-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 13px;
+}
+
+.pp-table thead {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+}
+
+.pp-table th {
+	background: #f6f7f7;
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: #646970;
+	padding: 8px 12px;
+	text-align: left;
+	white-space: nowrap;
+	border-bottom: 1px solid #e2e4e7;
+}
+
+.pp-table td {
+	padding: 9px 12px;
+	border-bottom: 1px solid #f0f0f1;
+	color: #1d2327;
+	vertical-align: middle;
+}
+
+.pp-table tbody tr:last-child td {
+	border-bottom: none;
+}
+
+.pp-table tbody tr:hover td {
+	background: #f9f9f9;
+}
+
+/* ── Status badges ───────────────────────────────────────────────────── */
+
+/* Log table: status is on the <td> directly */
+#wpresti-wrap td.pp-status-created {
+	background: #edfaef;
+	color: #00a32a;
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+
+#wpresti-wrap td.pp-status-updated {
+	background: #e8f0fb;
+	color: #2271b1;
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+
+#wpresti-wrap td.pp-status-error {
+	background: #fce8e8;
+	color: #d63638;
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+
+/* Reassign table: status is a <span> inside the td */
+#wpresti-wrap span.pp-status-created,
+#wpresti-wrap span.pp-status-error {
+	display: inline-block;
+	font-size: 11px;
+	font-weight: 700;
+	padding: 2px 8px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+#wpresti-wrap span.pp-status-created {
+	background: #edfaef;
+	color: #00a32a;
+}
+
+#wpresti-wrap span.pp-status-error {
+	background: #f0f0f1;
+	color: #646970;
+}
+
+/* ── Format badges (Gutenberg / Classic) ─────────────────────────────── */
+
+.pp-format-badge {
+	display: inline-block;
+	font-size: 10px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	padding: 2px 7px;
+	line-height: 1.6;
+	white-space: nowrap;
+}
+
+/* Blue — raw block markup, perfect fidelity */
+.pp-format-gutenberg {
+	background: #f0f6fc;
+	color: #0969da;
+}
+
+/* Amber — detected from rendered HTML, single HTML block in editor */
+.pp-format-gutenberg-rendered {
+	background: #fff8e6;
+	color: #9a6700;
+}
+
+.pp-format-classic {
+	background: #f6f6f6;
+	color: #57606a;
+}
+
+/* ── Reassign Authors tab ────────────────────────────────────────────── */
+
+.pp-reassign-layout {
+	max-width: 860px;
+}
+
+.pp-reassign-info-card {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 24px;
+	padding: 20px 24px;
+	margin-bottom: 20px;
+}
+
+.pp-info-card-body {
+	display: flex;
+	align-items: flex-start;
+	gap: 14px;
+	flex: 1;
+	min-width: 0;
+}
+
+.pp-info-icon {
+	font-size: 26px !important;
+	width: 26px !important;
+	height: 26px !important;
+	color: #8c8f94;
+	flex-shrink: 0;
+	margin-top: 1px;
+}
+
+.pp-info-text strong {
+	display: block;
+	font-size: 14px;
+	font-weight: 600;
+	color: #1d2327;
+	margin-bottom: 4px;
+}
+
+.pp-info-text p {
+	margin: 0;
+	font-size: 13px;
+	color: #646970;
+	line-height: 1.55;
+}
+
+.pp-reassign-action-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	padding-top: 16px;
+	margin-top: 16px;
+	border-top: 1px solid #f0f0f1;
+}
+
+.pp-match-summary {
+	font-size: 12px;
+	color: #646970;
+	font-weight: 500;
+}
+
+/* ── Footer bar ──────────────────────────────────────────────────────── */
+
+#wpresti-footer {
+	border-top: 1px solid #e2e4e7;
+	background: #f6f7f7;
+	margin-top: 32px;
+}
+
+#wpresti-footer-inner {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 14px 24px;
+	font-size: 12px;
+	color: #646970;
+}
+
+.wpresti-footer-brand {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-weight: 500;
+	color: #1d2327;
+}
+
+.wpresti-footer-brand .dashicons {
+	font-size: 14px;
+	width: 14px;
+	height: 14px;
+	line-height: 1;
+}
+
+.wpresti-footer-cta {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	color: #646970;
+}
+
+.wpresti-footer-cta a {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	color: #2271b1;
+	text-decoration: none;
+	font-weight: 600;
+	transition: color 150ms ease;
+}
+
+.wpresti-footer-cta a:hover {
+	color: #135e96;
+	text-decoration: underline;
+}
+
+.wpresti-footer-cta .dashicons {
+	font-size: 14px;
+	width: 14px;
+	height: 14px;
+	line-height: 1;
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────── */
+
+@media (max-width: 782px) {
+	.pp-import-layout {
+		flex-direction: column;
+	}
+
+	.pp-col-config,
+	.pp-col-status {
+		width: 100%;
+	}
+
+	.pp-header {
+		flex-wrap: wrap;
+		gap: 10px;
+	}
+
+	.pp-reassign-info-card {
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 16px;
+	}
+
+	.pp-reassign-action-bar {
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 10px;
+	}
+
+	.pp-btn-block {
+		width: 100%;
+	}
+
+	#wpresti-footer-inner {
+		flex-direction: column;
+		gap: 8px;
+		text-align: center;
+	}
+}
