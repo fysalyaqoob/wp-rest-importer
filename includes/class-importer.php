@@ -47,7 +47,7 @@ class WPRestI_Importer {
 		} else {
 			// Unauthenticated path — detect from rendered HTML fingerprints.
 			$is_gutenberg   = $this->detect_gutenberg_from_rendered( $rendered_content );
-			$content_type   = $is_gutenberg ? 'gutenberg-rendered' : 'classic';
+			$content_type   = $is_gutenberg ? 'gutenberg-reconstructed' : 'classic';
 			$source_content = $rendered_content;
 		}
 
@@ -57,8 +57,12 @@ class WPRestI_Importer {
 			$post_content = $this->rewrite_and_sideload_images( $source_content, 0 );
 		}
 
-		// Raw Gutenberg content already has block markup; everything else goes in an HTML block.
-		if ( 'gutenberg-raw' !== $content_type ) {
+		// Wrap / reconstruct block markup depending on content type.
+		if ( 'gutenberg-raw' === $content_type ) {
+			// Raw block markup is already correct — nothing to do.
+		} elseif ( 'gutenberg-reconstructed' === $content_type ) {
+			$post_content = $this->reconstruct_gutenberg_blocks( $post_content );
+		} else {
 			$post_content = '<!-- wp:html -->' . "\n" . $post_content . "\n" . '<!-- /wp:html -->';
 		}
 
@@ -104,6 +108,8 @@ class WPRestI_Importer {
 			$final_content = $this->rewrite_and_sideload_images( $source_content, $post_id );
 			if ( 'gutenberg-raw' === $content_type ) {
 				$final_content = $this->update_gutenberg_block_ids( $final_content );
+			} elseif ( 'gutenberg-reconstructed' === $content_type ) {
+				$final_content = $this->reconstruct_gutenberg_blocks( $final_content );
 			} else {
 				$final_content = '<!-- wp:html -->' . "\n" . $final_content . "\n" . '<!-- /wp:html -->';
 			}
@@ -357,6 +363,193 @@ class WPRestI_Importer {
 			},
 			$content
 		);
+	}
+
+	/**
+	 * Parse rendered HTML and wrap each top-level element in its Gutenberg block comment.
+	 * Falls back to wp:html for elements with no matching core block.
+	 */
+	private function reconstruct_gutenberg_blocks( string $html ): string {
+		if ( ! $html ) {
+			return '';
+		}
+
+		$dom = new DOMDocument( '1.0', 'utf-8' );
+		libxml_use_internal_errors( true );
+		$dom->loadHTML( '<?xml encoding="utf-8"?>' . $html );
+		libxml_clear_errors();
+
+		$body = $dom->getElementsByTagName( 'body' )->item( 0 );
+		if ( ! $body ) {
+			return '<!-- wp:html -->' . "\n" . $html . "\n" . '<!-- /wp:html -->';
+		}
+
+		// Snapshot to a plain array so the list stays stable during attribute mutations.
+		$children = [];
+		foreach ( $body->childNodes as $child ) {
+			$children[] = $child;
+		}
+
+		$blocks = '';
+		foreach ( $children as $node ) {
+			if ( XML_TEXT_NODE === $node->nodeType ) {
+				if ( '' === trim( $node->nodeValue ) ) {
+					continue;
+				}
+			}
+			if ( XML_ELEMENT_NODE !== $node->nodeType ) {
+				continue;
+			}
+			/** @var DOMElement $node */
+			$blocks .= $this->element_to_block( $dom, $node );
+		}
+
+		return rtrim( $blocks );
+	}
+
+	private function element_to_block( DOMDocument $dom, DOMElement $node ): string {
+		$tag     = strtolower( $node->nodeName );
+		$classes = $node->getAttribute( 'class' );
+
+		// Heading.
+		if ( in_array( $tag, [ 'h1', 'h2', 'h3', 'h4', 'h5', 'h6' ], true ) ) {
+			$level = (int) substr( $tag, 1 );
+			$html  = $dom->saveHTML( $node );
+			return "<!-- wp:heading {\"level\":{$level}} -->\n{$html}\n<!-- /wp:heading -->\n\n";
+		}
+
+		// Paragraph.
+		if ( 'p' === $tag ) {
+			$html = $dom->saveHTML( $node );
+			return "<!-- wp:paragraph -->\n{$html}\n<!-- /wp:paragraph -->\n\n";
+		}
+
+		// Separator.
+		if ( 'hr' === $tag ) {
+			$html = $dom->saveHTML( $node );
+			return "<!-- wp:separator -->\n{$html}\n<!-- /wp:separator -->\n\n";
+		}
+
+		// Quote.
+		if ( 'blockquote' === $tag ) {
+			$html = $dom->saveHTML( $node );
+			return "<!-- wp:quote -->\n{$html}\n<!-- /wp:quote -->\n\n";
+		}
+
+		// Lists.
+		if ( 'ul' === $tag ) {
+			$html = $dom->saveHTML( $node );
+			return "<!-- wp:list -->\n{$html}\n<!-- /wp:list -->\n\n";
+		}
+		if ( 'ol' === $tag ) {
+			$html = $dom->saveHTML( $node );
+			return "<!-- wp:list {\"ordered\":true} -->\n{$html}\n<!-- /wp:list -->\n\n";
+		}
+
+		// Pre-based blocks.
+		if ( 'pre' === $tag ) {
+			$html = $dom->saveHTML( $node );
+			if ( false !== strpos( $classes, 'wp-block-code' ) ) {
+				return "<!-- wp:code -->\n{$html}\n<!-- /wp:code -->\n\n";
+			}
+			if ( false !== strpos( $classes, 'wp-block-verse' ) ) {
+				return "<!-- wp:verse -->\n{$html}\n<!-- /wp:verse -->\n\n";
+			}
+			if ( false !== strpos( $classes, 'wp-block-preformatted' ) ) {
+				return "<!-- wp:preformatted -->\n{$html}\n<!-- /wp:preformatted -->\n\n";
+			}
+		}
+
+		// Figure-based blocks.
+		if ( 'figure' === $tag ) {
+			$html = $dom->saveHTML( $node );
+			if ( false !== strpos( $classes, 'wp-block-table' ) ) {
+				return "<!-- wp:table -->\n{$html}\n<!-- /wp:table -->\n\n";
+			}
+			if ( false !== strpos( $classes, 'wp-block-pullquote' ) ) {
+				return "<!-- wp:pullquote -->\n{$html}\n<!-- /wp:pullquote -->\n\n";
+			}
+		}
+
+		// Div-based blocks — most specific class checked first.
+		if ( 'div' === $tag ) {
+			// Image wrapper div → transforms inner figure.
+			if ( false !== strpos( $classes, 'wp-block-image' ) ) {
+				return $this->image_div_to_block( $dom, $node );
+			}
+
+			// Spacer — extract height and add aria-hidden.
+			if ( false !== strpos( $classes, 'wp-block-spacer' ) ) {
+				$style  = $node->getAttribute( 'style' );
+				$height = '100px';
+				if ( preg_match( '/height\s*:\s*([^;]+)/i', $style, $m ) ) {
+					$height = trim( $m[1] );
+				}
+				$node->setAttribute( 'aria-hidden', 'true' );
+				$html = $dom->saveHTML( $node );
+				return "<!-- wp:spacer {\"height\":\"{$height}\"} -->\n{$html}\n<!-- /wp:spacer -->\n\n";
+			}
+
+			// Buttons (plural) before button (singular) — "wp-block-buttons" is longer.
+			if ( false !== strpos( $classes, 'wp-block-buttons' ) ) {
+				$html = $dom->saveHTML( $node );
+				return "<!-- wp:buttons -->\n{$html}\n<!-- /wp:buttons -->\n\n";
+			}
+
+			if ( false !== strpos( $classes, 'wp-block-button' ) ) {
+				$html = $dom->saveHTML( $node );
+				return "<!-- wp:button -->\n{$html}\n<!-- /wp:button -->\n\n";
+			}
+
+			if ( false !== strpos( $classes, 'wp-block-columns' ) ) {
+				$html = $dom->saveHTML( $node );
+				return "<!-- wp:columns -->\n{$html}\n<!-- /wp:columns -->\n\n";
+			}
+
+			if ( false !== strpos( $classes, 'wp-block-group' ) ) {
+				$html = $dom->saveHTML( $node );
+				return "<!-- wp:group {\"layout\":{\"type\":\"constrained\"}} -->\n{$html}\n<!-- /wp:group -->\n\n";
+			}
+
+			if ( false !== strpos( $classes, 'wp-block-media-text' ) ) {
+				$html = $dom->saveHTML( $node );
+				return "<!-- wp:media-text -->\n{$html}\n<!-- /wp:media-text -->\n\n";
+			}
+
+			if ( false !== strpos( $classes, 'wp-block-cover' ) ) {
+				$html = $dom->saveHTML( $node );
+				return "<!-- wp:cover -->\n{$html}\n<!-- /wp:cover -->\n\n";
+			}
+		}
+
+		// Fallback for unknown / third-party blocks.
+		$html = $dom->saveHTML( $node );
+		return "<!-- wp:html -->\n{$html}\n<!-- /wp:html -->\n\n";
+	}
+
+	/**
+	 * Transform a wp-block-image wrapper div into a wp:image block.
+	 * Extracts the inner figure, copies the size class, and outputs the
+	 * figure directly (dropping the outer div) as Gutenberg expects.
+	 */
+	private function image_div_to_block( DOMDocument $dom, DOMElement $div ): string {
+		$figures = $div->getElementsByTagName( 'figure' );
+		if ( 0 === $figures->length ) {
+			$html = $dom->saveHTML( $div );
+			return "<!-- wp:html -->\n{$html}\n<!-- /wp:html -->\n\n";
+		}
+
+		$figure    = $figures->item( 0 );
+		$fig_class = $figure->getAttribute( 'class' );
+		$size      = 'full';
+		if ( preg_match( '/\bsize-(\S+)\b/', $fig_class, $m ) ) {
+			$size = $m[1];
+		}
+
+		$figure->setAttribute( 'class', 'wp-block-image size-' . $size );
+		$html = $dom->saveHTML( $figure );
+
+		return "<!-- wp:image {\"sizeSlug\":\"{$size}\",\"linkDestination\":\"none\"} -->\n{$html}\n<!-- /wp:image -->\n\n";
 	}
 
 	private function import_seo_meta( int $post_id, array $item ): void {
