@@ -158,6 +158,7 @@ class WPRestI_Ajax_Handler {
 		$batch    = array_splice( $progress['queue'], 0, 5 );
 		$importer = new WPRestI_Importer();
 		$importer->set_source_domain( $progress['source_domain'] ?? '' );
+		$importer->set_source_url( $progress['site_url'] ?? '' );
 		$importer->set_assign_author( (int) ( $progress['assign_author_id'] ?? 0 ) );
 
 		$batch_log = [];

@@ -6,6 +6,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 class WPRestI_Importer {
 
 	private $source_domain       = '';
+	private string $source_site_url = '';
 	private int $assign_author_id = 0;
 
 	/** Maps local attachment URL → local attachment ID; rebuilt per item. */
@@ -34,7 +35,7 @@ class WPRestI_Importer {
 							? $item['content']['raw']
 							: '';
 		$rendered_content = $item['content']['rendered'] ?? '';
-		$raw_excerpt      = $item['excerpt']['rendered'] ?? '';
+		$raw_excerpt      = $this->rewrite_internal_links( $item['excerpt']['rendered'] ?? '' );
 
 		$this->attachment_url_to_id = [];
 
@@ -56,6 +57,7 @@ class WPRestI_Importer {
 		if ( $this->source_domain ) {
 			$post_content = $this->rewrite_and_sideload_images( $source_content, 0 );
 		}
+		$post_content = $this->rewrite_internal_links( $post_content );
 
 		// Wrap / reconstruct block markup depending on content type.
 		if ( 'gutenberg-raw' === $content_type ) {
@@ -103,9 +105,10 @@ class WPRestI_Importer {
 			];
 		}
 
-		// Second-pass: re-sideload images with the real post ID, then fix block IDs.
+		// Second-pass: re-sideload images with the real post ID, then rewrite links and fix block IDs.
 		if ( $this->source_domain ) {
 			$final_content = $this->rewrite_and_sideload_images( $source_content, $post_id );
+			$final_content = $this->rewrite_internal_links( $final_content );
 			if ( 'gutenberg-raw' === $content_type ) {
 				$final_content = $this->update_gutenberg_block_ids( $final_content );
 			} elseif ( 'gutenberg-reconstructed' === $content_type ) {
@@ -138,6 +141,10 @@ class WPRestI_Importer {
 	 */
 	public function set_source_domain( string $domain ): void {
 		$this->source_domain = $domain;
+	}
+
+	public function set_source_url( string $url ): void {
+		$this->source_site_url = trailingslashit( esc_url_raw( $url ) );
 	}
 
 	public function set_assign_author( int $user_id ): void {
@@ -552,6 +559,49 @@ class WPRestI_Importer {
 		return "<!-- wp:image {\"sizeSlug\":\"{$size}\",\"linkDestination\":\"none\"} -->\n{$html}\n<!-- /wp:image -->\n\n";
 	}
 
+	/**
+	 * Replace all URLs pointing to the source site with the destination site URL.
+	 * Handles http/https variants and www/non-www variants. External links are untouched.
+	 */
+	private function rewrite_internal_links( string $content ): string {
+		if ( ! $this->source_site_url || ! $content ) {
+			return $content;
+		}
+
+		$source      = rtrim( $this->source_site_url, '/' );
+		$destination = rtrim( get_site_url(), '/' );
+
+		if ( $source === $destination ) {
+			return $content;
+		}
+
+		$source_host = wp_parse_url( $source, PHP_URL_HOST ) ?? '';
+
+		// Exact match — source URL followed by a path slash.
+		$content = str_replace( $source . '/', $destination . '/', $content );
+
+		// Exact match — source URL at end of a quoted attribute (no trailing slash).
+		$content = str_replace( $source . '"', $destination . '"', $content );
+		$content = str_replace( $source . "'", $destination . "'", $content );
+
+		// http ↔ https variant.
+		$source_http  = str_replace( 'https://', 'http://',  $source );
+		$source_https = str_replace( 'http://',  'https://', $source );
+		$content = str_replace( $source_http  . '/', $destination . '/', $content );
+		$content = str_replace( $source_https . '/', $destination . '/', $content );
+
+		// www ↔ non-www variant.
+		if ( strpos( $source_host, 'www.' ) === 0 ) {
+			$source_no_www = str_replace( '://www.', '://', $source );
+			$content = str_replace( $source_no_www . '/', $destination . '/', $content );
+		} else {
+			$source_with_www = str_replace( '://', '://www.', $source );
+			$content = str_replace( $source_with_www . '/', $destination . '/', $content );
+		}
+
+		return $content;
+	}
+
 	private function import_seo_meta( int $post_id, array $item ): void {
 		$yoast = $item['yoast_head_json'] ?? [];
 		if ( empty( $yoast ) || ! is_array( $yoast ) ) {
@@ -562,6 +612,8 @@ class WPRestI_Importer {
 		if ( ! $description ) {
 			return;
 		}
+
+		$description = $this->rewrite_internal_links( $description );
 
 		update_post_meta( $post_id, '_yoast_wpseo_metadesc', $description );
 		update_post_meta( $post_id, 'rank_math_description', $description );
