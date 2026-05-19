@@ -715,8 +715,8 @@ details[open] .pp-advanced-arrow {
 	color: #0969da;
 }
 
-/* Amber — detected from rendered HTML, single HTML block in editor */
-.pp-format-gutenberg-rendered {
+/* Amber — reconstructed from rendered HTML, single HTML block in editor */
+.pp-format-gutenberg-reconstructed {
 	background: #fff8e6;
 	color: #9a6700;
 }

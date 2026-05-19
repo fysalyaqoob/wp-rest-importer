@@ -5,7 +5,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class WPRestI_API_Client {
 
-	private $site_url;
+	private string $site_url;
 	private string $auth_header      = '';
 	private bool   $use_edit_context = false;
 
@@ -25,9 +25,18 @@ class WPRestI_API_Client {
 	 * @return array|WP_Error  WP_Error with code 'auth_failed' on HTTP 401.
 	 */
 	public function fetch_all( string $post_type ) {
+		if ( ! in_array( $post_type, [ 'posts', 'pages' ], true ) ) {
+			return new WP_Error( 'invalid_post_type', 'Invalid post type: ' . $post_type );
+		}
+
 		$endpoint  = $this->site_url . 'wp-json/wp/v2/' . $post_type;
 		$page      = 1;
 		$all_items = [];
+
+		// SSRF check runs once — same host for every paginated request.
+		if ( ! $this->is_safe_url( $endpoint ) ) {
+			return new WP_Error( 'blocked_url', 'Request blocked: URL resolves to a private or reserved address.' );
+		}
 
 		do {
 			$query_args = [
@@ -62,7 +71,7 @@ class WPRestI_API_Client {
 			}
 
 			$headers     = wp_remote_retrieve_headers( $response );
-			$total_pages = (int) ( $headers['x-wp-totalpages'] ?? 1 );
+			$total_pages = min( (int) ( $headers['x-wp-totalpages'] ?? 1 ), 500 );
 
 			$body  = wp_remote_retrieve_body( $response );
 			$items = json_decode( $body, true );
@@ -83,26 +92,17 @@ class WPRestI_API_Client {
 		return $all_items;
 	}
 
-	/**
-	 * Count available items without fetching them all (reads only page 1).
-	 *
-	 * @param string $post_type 'posts' or 'pages'
-	 * @return int|WP_Error
-	 */
-	public function count( string $post_type ) {
-		$url = add_query_arg(
-			[ 'per_page' => 1, 'page' => 1 ],
-			$this->site_url . 'wp-json/wp/v2/' . $post_type
-		);
-
-		$response = wp_remote_get( $url, $this->build_request_args( 30 ) );
-
-		if ( is_wp_error( $response ) ) {
-			return $response;
+	private function is_safe_url( string $url ): bool {
+		$host = wp_parse_url( $url, PHP_URL_HOST );
+		if ( ! $host ) {
+			return false;
 		}
-
-		$headers = wp_remote_retrieve_headers( $response );
-		return (int) ( $headers['x-wp-total'] ?? 0 );
+		$ip = gethostbyname( $host );
+		return (bool) filter_var(
+			$ip,
+			FILTER_VALIDATE_IP,
+			FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE
+		);
 	}
 
 	private function build_request_args( int $timeout ): array {

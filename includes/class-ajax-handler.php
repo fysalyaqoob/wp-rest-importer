@@ -30,8 +30,16 @@ class WPRestI_Ajax_Handler {
 		$site_url            = esc_url_raw( wp_unslash( $_POST['site_url'] ?? '' ) );
 		$import_type         = sanitize_key( $_POST['import_type'] ?? 'both' );
 		$assign_author_id    = absint( $_POST['assign_author_id'] ?? 0 );
+
+		if ( ! in_array( $import_type, [ 'posts', 'pages', 'both' ], true ) ) {
+			wp_send_json_error( [ 'message' => 'Invalid import type.' ] );
+		}
 		$source_username     = sanitize_user( wp_unslash( $_POST['source_username'] ?? '' ), true );
 		$source_app_password = trim( wp_unslash( $_POST['source_app_password'] ?? '' ) );
+
+		if ( $assign_author_id > 0 && ! get_user_by( 'id', $assign_author_id ) ) {
+			$assign_author_id = 0;
+		}
 
 		if ( ! $site_url ) {
 			wp_send_json_error( [ 'message' => 'Site URL is required.' ] );
@@ -69,7 +77,7 @@ class WPRestI_Ajax_Handler {
 				}
 
 				foreach ( $items as $item ) {
-					$auth_queue[] = [ 'data' => $item, 'post_type' => $type_map[ $ft ] ];
+					$auth_queue[] = [ 'data' => $this->trim_queue_item( $item ), 'post_type' => $type_map[ $ft ] ];
 				}
 			}
 
@@ -88,7 +96,7 @@ class WPRestI_Ajax_Handler {
 					wp_send_json_error( [ 'message' => $items->get_error_message() ] );
 				}
 				foreach ( $items as $item ) {
-					$queue[] = [ 'data' => $item, 'post_type' => 'post' ];
+					$queue[] = [ 'data' => $this->trim_queue_item( $item ), 'post_type' => 'post' ];
 				}
 			}
 
@@ -98,7 +106,7 @@ class WPRestI_Ajax_Handler {
 					wp_send_json_error( [ 'message' => $items->get_error_message() ] );
 				}
 				foreach ( $items as $item ) {
-					$queue[] = [ 'data' => $item, 'post_type' => 'page' ];
+					$queue[] = [ 'data' => $this->trim_queue_item( $item ), 'post_type' => 'page' ];
 				}
 			}
 		}
@@ -141,9 +149,17 @@ class WPRestI_Ajax_Handler {
 			wp_send_json_error( [ 'message' => 'Unauthorized' ], 403 );
 		}
 
+		// Prevent two simultaneous requests from processing the same batch items.
+		if ( get_transient( 'wpresti_batch_lock' ) ) {
+			wp_send_json_error( [ 'message' => 'A batch is already processing. Please wait.' ] );
+			return;
+		}
+		set_transient( 'wpresti_batch_lock', 1, 30 );
+
 		$progress = get_option( 'wpresti_progress', [] );
 
 		if ( empty( $progress ) || empty( $progress['queue'] ) ) {
+			delete_transient( 'wpresti_batch_lock' );
 			wp_send_json_success(
 				[
 					'done'     => (int) ( $progress['done'] ?? 0 ),
@@ -170,10 +186,16 @@ class WPRestI_Ajax_Handler {
 			$progress['done']++;
 		}
 
+		// Cap stored log at 100 entries to prevent unbounded wp_options growth.
+		if ( count( $progress['log'] ) > 100 ) {
+			$progress['log'] = array_slice( $progress['log'], -100 );
+		}
+
 		$is_complete          = empty( $progress['queue'] );
 		$progress['complete'] = $is_complete;
 
 		update_option( 'wpresti_progress', $progress, false );
+		delete_transient( 'wpresti_batch_lock' );
 
 		wp_send_json_success(
 			[
@@ -222,7 +244,7 @@ class WPRestI_Ajax_Handler {
 			[
 				'post_type'      => [ 'post', 'page' ],
 				'post_status'    => 'any',
-				'posts_per_page' => -1,
+				'posts_per_page' => 5000,
 				'fields'         => 'ids',
 				'meta_query'     => [
 					[
@@ -232,6 +254,9 @@ class WPRestI_Ajax_Handler {
 				],
 			]
 		);
+
+		// Pre-load all post meta in one query so the loop hits the cache.
+		update_meta_cache( 'post', $posts );
 
 		// Group by original login.
 		$groups = [];
@@ -283,7 +308,7 @@ class WPRestI_Ajax_Handler {
 			[
 				'post_type'      => [ 'post', 'page' ],
 				'post_status'    => 'any',
-				'posts_per_page' => -1,
+				'posts_per_page' => 5000,
 				'fields'         => 'ids',
 				'meta_query'     => [
 					[
@@ -294,29 +319,46 @@ class WPRestI_Ajax_Handler {
 			]
 		);
 
+		// Pre-load all post meta in one query so the loop hits the cache.
+		update_meta_cache( 'post', $posts );
+
+		// Collect login for each post in one pass, then resolve unique logins once.
+		$post_logins = [];
+		foreach ( $posts as $post_id ) {
+			$post_logins[ $post_id ] = get_post_meta( $post_id, '_original_author_login', true );
+		}
+
+		$user_map = [];
+		foreach ( array_unique( array_filter( $post_logins ) ) as $login ) {
+			$wp_user = get_user_by( 'login', $login );
+			if ( $wp_user ) {
+				$user_map[ $login ] = $wp_user;
+			}
+		}
+
 		$reassigned = 0;
 		$unmatched  = 0;
 
 		foreach ( $posts as $post_id ) {
-			$login = get_post_meta( $post_id, '_original_author_login', true );
+			$login = $post_logins[ $post_id ];
 
-			if ( ! $login ) {
+			if ( ! $login || ! isset( $user_map[ $login ] ) ) {
 				$unmatched++;
 				continue;
 			}
 
-			$wp_user = get_user_by( 'login', $login );
-			if ( ! $wp_user ) {
-				$unmatched++;
-				continue;
-			}
-
-			wp_update_post(
+			$update_id = wp_update_post(
 				[
 					'ID'          => $post_id,
-					'post_author' => $wp_user->ID,
-				]
+					'post_author' => $user_map[ $login ]->ID,
+				],
+				true
 			);
+
+			if ( is_wp_error( $update_id ) ) {
+				$unmatched++;
+				continue;
+			}
 
 			delete_post_meta( $post_id, '_original_author_name' );
 			delete_post_meta( $post_id, '_original_author_login' );
@@ -331,5 +373,66 @@ class WPRestI_Ajax_Handler {
 				'unmatched'  => $unmatched,
 			]
 		);
+	}
+
+	/**
+	 * Strip a raw REST API item down to the fields actually needed for import,
+	 * dramatically reducing the size of the serialised queue in wp_options.
+	 */
+	private function trim_queue_item( array $item ): array {
+		$out = [
+			'slug'      => $item['slug'] ?? '',
+			'title'     => [ 'rendered' => $item['title']['rendered'] ?? '' ],
+			'status'    => $item['status'] ?? 'publish',
+			'date_gmt'  => $item['date_gmt'] ?? '',
+			'content'   => [],
+			'excerpt'   => [ 'rendered' => $item['excerpt']['rendered'] ?? '' ],
+			'_embedded' => [],
+		];
+
+		if ( isset( $item['content']['raw'] ) && '' !== $item['content']['raw'] ) {
+			$out['content']['raw'] = $item['content']['raw'];
+		} else {
+			$out['content']['rendered'] = $item['content']['rendered'] ?? '';
+		}
+
+		if ( isset( $item['_embedded']['wp:featuredmedia'][0]['source_url'] ) ) {
+			$out['_embedded']['wp:featuredmedia'] = [
+				[ 'source_url' => $item['_embedded']['wp:featuredmedia'][0]['source_url'] ],
+			];
+		}
+
+		if ( isset( $item['_embedded']['author'][0] ) ) {
+			$a = $item['_embedded']['author'][0];
+			$out['_embedded']['author'] = [
+				[
+					'name'  => $a['name'] ?? '',
+					'slug'  => $a['slug'] ?? '',
+					'email' => $a['email'] ?? '',
+				],
+			];
+		}
+
+		if ( isset( $item['_embedded']['wp:term'] ) ) {
+			$terms = [];
+			foreach ( $item['_embedded']['wp:term'] as $group ) {
+				$slim = [];
+				foreach ( (array) $group as $t ) {
+					$slim[] = [
+						'taxonomy' => $t['taxonomy'] ?? '',
+						'name'     => $t['name'] ?? '',
+						'slug'     => $t['slug'] ?? '',
+					];
+				}
+				$terms[] = $slim;
+			}
+			$out['_embedded']['wp:term'] = $terms;
+		}
+
+		if ( isset( $item['yoast_head_json']['description'] ) ) {
+			$out['yoast_head_json'] = [ 'description' => $item['yoast_head_json']['description'] ];
+		}
+
+		return $out;
 	}
 }

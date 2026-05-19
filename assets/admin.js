@@ -137,12 +137,14 @@
     function appendLogRows(rows) {
         rows.forEach(function (row) {
             var tr = document.createElement('tr');
-            var statusClass = 'pp-status-' + (row.action || 'error').toLowerCase();
+            var allowedActions = ['created', 'updated', 'error'];
+            var rawAction = (row.action || 'error').toLowerCase();
+            var statusClass = 'pp-status-' + (allowedActions.indexOf(rawAction) !== -1 ? rawAction : 'error');
             var formatBadge = '';
             if (row.format === 'gutenberg-raw') {
                 formatBadge = '<span class="pp-format-badge pp-format-gutenberg">Gutenberg</span>';
-            } else if (row.format === 'gutenberg-rendered') {
-                formatBadge = '<span class="pp-format-badge pp-format-gutenberg-rendered">Gutenberg</span>';
+            } else if (row.format === 'gutenberg-reconstructed') {
+                formatBadge = '<span class="pp-format-badge pp-format-gutenberg-reconstructed">Gutenberg</span>';
             } else if (row.format === 'classic') {
                 formatBadge = '<span class="pp-format-badge pp-format-classic">Classic</span>';
             }
@@ -173,9 +175,19 @@
         total = 0;
     }
 
+    function setButtonText(btn, text) {
+        var nodes = btn.childNodes;
+        for (var i = nodes.length - 1; i >= 0; i--) {
+            if (nodes[i].nodeType === 3) {
+                nodes[i].nodeValue = text;
+                break;
+            }
+        }
+    }
+
     function setSubmitState(disabled) {
-        submitBtn.disabled    = disabled;
-        submitBtn.textContent = disabled ? 'Importing…' : 'Start Import';
+        submitBtn.disabled = disabled;
+        setButtonText(submitBtn, disabled ? ' Importing…' : ' Start Import');
     }
 
     function showNotice(type, message) {
@@ -196,8 +208,8 @@
 
     if (scanBtn) {
         scanBtn.addEventListener('click', function () {
-            scanBtn.disabled    = true;
-            scanBtn.textContent = 'Scanning…';
+            scanBtn.disabled = true;
+            setButtonText(scanBtn, ' Scanning…');
             showReassignNotice('info', 'Scanning imported posts…');
             reassignResults.style.display = 'none';
 
@@ -208,8 +220,8 @@
             fetch(wprestiData.ajaxUrl, { method: 'POST', body: body })
                 .then(function (r) { return r.json(); })
                 .then(function (resp) {
-                    scanBtn.disabled    = false;
-                    scanBtn.textContent = 'Scan Imported Posts';
+                    scanBtn.disabled = false;
+                    setButtonText(scanBtn, ' Scan Imported Posts');
 
                     if (!resp.success) {
                         showReassignNotice('error', resp.data.message || 'Scan failed.');
@@ -227,8 +239,8 @@
                     reassignNotice.style.display  = 'none';
                 })
                 .catch(function (err) {
-                    scanBtn.disabled    = false;
-                    scanBtn.textContent = 'Scan Imported Posts';
+                    scanBtn.disabled = false;
+                    setButtonText(scanBtn, ' Scan Imported Posts');
                     showReassignNotice('error', 'Network error: ' + err.message);
                 });
         });
@@ -236,8 +248,8 @@
 
     if (runReassignBtn) {
         runReassignBtn.addEventListener('click', function () {
-            runReassignBtn.disabled    = true;
-            runReassignBtn.textContent = 'Reassigning…';
+            runReassignBtn.disabled = true;
+            setButtonText(runReassignBtn, ' Reassigning…');
 
             var body = new FormData();
             body.append('action', 'wpresti_reassign_run');
@@ -246,8 +258,8 @@
             fetch(wprestiData.ajaxUrl, { method: 'POST', body: body })
                 .then(function (r) { return r.json(); })
                 .then(function (resp) {
-                    runReassignBtn.disabled    = false;
-                    runReassignBtn.textContent = 'Run Reassignment';
+                    runReassignBtn.disabled = false;
+                    setButtonText(runReassignBtn, ' Run Reassignment');
 
                     if (!resp.success) {
                         showReassignNotice('error', resp.data.message || 'Reassignment failed.');
@@ -267,8 +279,8 @@
                     scanBtn.click();
                 })
                 .catch(function (err) {
-                    runReassignBtn.disabled    = false;
-                    runReassignBtn.textContent = 'Run Reassignment';
+                    runReassignBtn.disabled = false;
+                    setButtonText(runReassignBtn, ' Run Reassignment');
                     showReassignNotice('error', 'Network error: ' + err.message);
                 });
         });

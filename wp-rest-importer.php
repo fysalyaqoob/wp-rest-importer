@@ -24,11 +24,15 @@ add_filter( 'auto_update_plugin', function( $update, $item ) {
 
 // Remove from wordpress.org update check payload
 add_filter( 'http_request_args', function( $args, $url ) {
-	if ( strpos( $url, 'api.wordpress.org/plugins/update-check' ) !== false ) {
+	if ( strpos( $url, 'api.wordpress.org/plugins/update-check' ) !== false
+		&& isset( $args['body'] )
+		&& is_array( $args['body'] )
+		&& isset( $args['body']['plugins'] )
+	) {
 		$plugins = json_decode( $args['body']['plugins'], true );
-		if ( isset( $plugins['plugins']['wp-rest-importer/wp-rest-importer.php'] ) ) {
+		if ( is_array( $plugins ) && isset( $plugins['plugins']['wp-rest-importer/wp-rest-importer.php'] ) ) {
 			unset( $plugins['plugins']['wp-rest-importer/wp-rest-importer.php'] );
-			$args['body']['plugins'] = json_encode( $plugins );
+			$args['body']['plugins'] = wp_json_encode( $plugins );
 		}
 	}
 	return $args;

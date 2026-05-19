@@ -5,7 +5,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class WPRestI_Importer {
 
-	private $source_domain       = '';
+	private string $source_domain = '';
 	private string $source_site_url = '';
 	private int $assign_author_id = 0;
 
@@ -29,15 +29,22 @@ class WPRestI_Importer {
 		$slug   = sanitize_title( $item['slug'] ?? '' );
 		$title  = wp_strip_all_tags( $item['title']['rendered'] ?? '' );
 		$status = sanitize_key( $item['status'] ?? 'publish' );
+		$status = in_array( $status, [ 'publish', 'future', 'draft', 'pending', 'private' ], true ) ? $status : 'publish';
 		$date   = sanitize_text_field( $item['date_gmt'] ?? current_time( 'mysql', true ) );
 
 		$raw_content      = isset( $item['content']['raw'] ) && is_string( $item['content']['raw'] )
 							? $item['content']['raw']
 							: '';
 		$rendered_content = $item['content']['rendered'] ?? '';
-		$raw_excerpt      = $this->rewrite_internal_links( $item['excerpt']['rendered'] ?? '' );
 
+		// Reset map before any sideloading so excerpt and content entries are both retained.
 		$this->attachment_url_to_id = [];
+
+		$raw_excerpt = $item['excerpt']['rendered'] ?? '';
+		if ( $this->source_domain ) {
+			$raw_excerpt = $this->rewrite_and_sideload_images( $raw_excerpt, 0 );
+		}
+		$raw_excerpt = $this->rewrite_internal_links( $raw_excerpt );
 
 		// Determine content type and the source string to sideload/save.
 		if ( $raw_content !== '' ) {
@@ -116,7 +123,16 @@ class WPRestI_Importer {
 			} else {
 				$final_content = '<!-- wp:html -->' . "\n" . $final_content . "\n" . '<!-- /wp:html -->';
 			}
-			wp_update_post( [ 'ID' => $post_id, 'post_content' => $final_content ] );
+
+			$update_result = wp_update_post( [ 'ID' => $post_id, 'post_content' => $final_content ], true );
+			if ( is_wp_error( $update_result ) ) {
+				return [
+					'title'  => $title,
+					'type'   => $post_type,
+					'status' => 'Error: ' . $update_result->get_error_message(),
+					'action' => 'Error',
+				];
+			}
 		}
 
 		$this->import_terms( $post_id, $item );
@@ -148,7 +164,11 @@ class WPRestI_Importer {
 	}
 
 	public function set_assign_author( int $user_id ): void {
-		$this->assign_author_id = $user_id;
+		if ( $user_id > 0 && get_user_by( 'id', $user_id ) ) {
+			$this->assign_author_id = $user_id;
+		} else {
+			$this->assign_author_id = 0;
+		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -239,12 +259,29 @@ class WPRestI_Importer {
 		return $content;
 	}
 
+	private function is_safe_url( string $url ): bool {
+		$host = wp_parse_url( $url, PHP_URL_HOST );
+		if ( ! $host ) {
+			return false;
+		}
+		$ip = gethostbyname( $host );
+		return (bool) filter_var(
+			$ip,
+			FILTER_VALIDATE_IP,
+			FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE
+		);
+	}
+
 	/**
 	 * Sideload an image, skipping if already imported by source URL.
 	 *
 	 * @return int|WP_Error Attachment ID or error.
 	 */
 	private function sideload_image( string $image_url, int $post_id ) {
+		if ( ! $this->is_safe_url( $image_url ) ) {
+			return new WP_Error( 'blocked_url', 'Image URL resolves to a private or reserved address.' );
+		}
+
 		$existing = get_posts(
 			[
 				'post_type'      => 'attachment',
@@ -310,9 +347,6 @@ class WPRestI_Importer {
 			'is-layout-flex',
 			'is-layout-flow',
 			'wp-container-',
-			'alignfull',
-			'alignwide',
-			'has-background',
 			'wp-block-group',
 			'wp-block-columns',
 			'wp-block-image',
@@ -350,9 +384,12 @@ class WPRestI_Importer {
 		}
 
 		$block_types = 'image|gallery|cover|media-text';
+		$close_tag   = '<!--\s*\/wp:(?:' . $block_types . ')\s*-->';
 
 		return preg_replace_callback(
-			'/(<!--\s*wp:(?:' . $block_types . ')\s*{[^}]*"id"\s*:\s*\d+[^}]*}\s*-->)(.*?)(<!--\s*\/wp:(?:' . $block_types . ')\s*-->)/s',
+			'/(<!--\s*wp:(?:' . $block_types . ')\s*\{[^}]*"id"\s*:\s*\d+[^}]*\}\s*-->)'
+			. '((?:(?!' . $close_tag . ')[\s\S])*)'
+			. '(' . $close_tag . ')/u',
 			function ( $m ) {
 				$opening = $m[1];
 				$inner   = $m[2];
@@ -382,9 +419,10 @@ class WPRestI_Importer {
 		}
 
 		$dom = new DOMDocument( '1.0', 'utf-8' );
-		libxml_use_internal_errors( true );
+		$previous_libxml_state = libxml_use_internal_errors( true );
 		$dom->loadHTML( '<?xml encoding="utf-8"?>' . $html );
 		libxml_clear_errors();
+		libxml_use_internal_errors( $previous_libxml_state );
 
 		$body = $dom->getElementsByTagName( 'body' )->item( 0 );
 		if ( ! $body ) {
@@ -550,7 +588,10 @@ class WPRestI_Importer {
 		$fig_class = $figure->getAttribute( 'class' );
 		$size      = 'full';
 		if ( preg_match( '/\bsize-(\S+)\b/', $fig_class, $m ) ) {
-			$size = $m[1];
+			$size = sanitize_key( $m[1] );
+			if ( '' === $size ) {
+				$size = 'full';
+			}
 		}
 
 		$figure->setAttribute( 'class', 'wp-block-image size-' . $size );
@@ -576,27 +617,25 @@ class WPRestI_Importer {
 		}
 
 		$source_host = wp_parse_url( $source, PHP_URL_HOST ) ?? '';
+		if ( ! $source_host ) {
+			return $content;
+		}
 
-		// Exact match — source URL followed by a path slash.
-		$content = str_replace( $source . '/', $destination . '/', $content );
-
-		// Exact match — source URL at end of a quoted attribute (no trailing slash).
-		$content = str_replace( $source . '"', $destination . '"', $content );
-		$content = str_replace( $source . "'", $destination . "'", $content );
-
-		// http ↔ https variant.
-		$source_http  = str_replace( 'https://', 'http://',  $source );
-		$source_https = str_replace( 'http://',  'https://', $source );
-		$content = str_replace( $source_http  . '/', $destination . '/', $content );
-		$content = str_replace( $source_https . '/', $destination . '/', $content );
-
-		// www ↔ non-www variant.
+		$host_variants = [ $source_host ];
 		if ( strpos( $source_host, 'www.' ) === 0 ) {
-			$source_no_www = str_replace( '://www.', '://', $source );
-			$content = str_replace( $source_no_www . '/', $destination . '/', $content );
+			$host_variants[] = substr( $source_host, 4 );
 		} else {
-			$source_with_www = str_replace( '://', '://www.', $source );
-			$content = str_replace( $source_with_www . '/', $destination . '/', $content );
+			$host_variants[] = 'www.' . $source_host;
+		}
+
+		$schemes = [ 'https', 'http' ];
+		foreach ( $host_variants as $host_variant ) {
+			foreach ( $schemes as $scheme ) {
+				$base    = $scheme . '://' . $host_variant;
+				$content = str_replace( $base . '/', $destination . '/', $content );
+				$content = str_replace( $base . '"', $destination . '"', $content );
+				$content = str_replace( $base . "'", $destination . "'", $content );
+			}
 		}
 
 		return $content;
