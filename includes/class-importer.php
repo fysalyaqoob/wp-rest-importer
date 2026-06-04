@@ -5,9 +5,12 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class WPRestI_Importer {
 
+	private const META_SOURCE_ID = '_wpresti_source_id';
+
 	private string $source_domain = '';
 	private string $source_site_url = '';
 	private int $assign_author_id = 0;
+	private string $import_mode = 'overwrite';
 
 	/** Maps local attachment URL → local attachment ID; rebuilt per item. */
 	private array $attachment_url_to_id = [];
@@ -22,12 +25,53 @@ class WPRestI_Importer {
 	 * Import a single post/page item from the REST API response.
 	 *
 	 * @param array  $item      Decoded REST API item (with _embedded).
-	 * @param string $post_type 'post' or 'page'
+	 * @param string $post_type      Post type to create/update on this site.
+	 * @param string $source_type    Original type on the source site (optional, for meta).
 	 * @return array { id, title, type, status, action, format }
 	 */
-	public function import_item( array $item, string $post_type ): array {
+	public function import_item( array $item, string $post_type, string $source_type = '' ): array {
+		if ( '' === $source_type ) {
+			$source_type = $post_type;
+		}
 		$slug   = sanitize_title( $item['slug'] ?? '' );
 		$title  = wp_strip_all_tags( $item['title']['rendered'] ?? '' );
+
+		$source_id       = (int) ( $item['id'] ?? 0 );
+		$source_parent   = (int) ( $item['parent'] ?? 0 );
+		$local_parent_id = $this->resolve_local_parent_id( $source_parent, $post_type );
+		$existing_id     = $this->find_existing_post_id( $item, $post_type, $slug, $local_parent_id );
+
+		if ( apply_filters( 'wpresti_skip_item', false, $item, $post_type, $existing_id ) ) {
+			return [
+				'title'  => $title,
+				'type'   => $post_type,
+				'status' => 'Skipped (filter)',
+				'action' => 'Skipped',
+				'format' => '',
+			];
+		}
+
+		if ( 'new_only' === $this->import_mode && $existing_id > 0 ) {
+			return [
+				'title'  => $title,
+				'type'   => $post_type,
+				'status' => 'Skipped (exists)',
+				'action' => 'Skipped',
+				'format' => '',
+			];
+		}
+
+		if ( 'update_only' === $this->import_mode && 0 === $existing_id ) {
+			return [
+				'title'  => $title,
+				'type'   => $post_type,
+				'status' => 'Skipped (new)',
+				'action' => 'Skipped',
+				'format' => '',
+			];
+		}
+
+		do_action( 'wpresti_before_import_item', $item, $post_type, $existing_id );
 		$status = sanitize_key( $item['status'] ?? 'publish' );
 		$status = in_array( $status, [ 'publish', 'future', 'draft', 'pending', 'private' ], true ) ? $status : 'publish';
 		$date   = sanitize_text_field( $item['date_gmt'] ?? current_time( 'mysql', true ) );
@@ -59,6 +103,10 @@ class WPRestI_Importer {
 			$source_content = $rendered_content;
 		}
 
+		if ( 'classic' === $content_type && $raw_content !== '' ) {
+			$source_content = $raw_content;
+		}
+
 		// First-pass sideload (post_id=0 so attachments are unparented initially).
 		$post_content = $source_content;
 		if ( $this->source_domain ) {
@@ -75,19 +123,19 @@ class WPRestI_Importer {
 			$post_content = '<!-- wp:html -->' . "\n" . $post_content . "\n" . '<!-- /wp:html -->';
 		}
 
-		// Find existing post by slug to decide create vs update.
-		$existing    = get_page_by_path( $slug, OBJECT, $post_type );
-		$existing_id = $existing ? (int) $existing->ID : 0;
-
 		$post_data = [
-			'post_title'    => $title,
-			'post_name'     => $slug,
-			'post_status'   => $status,
-			'post_type'     => $post_type,
-			'post_content'  => $post_content,
-			'post_excerpt'  => $raw_excerpt,
-			'post_date_gmt' => $date,
-			'post_date'     => get_date_from_gmt( $date ),
+			'post_title'        => $title,
+			'post_name'         => $slug,
+			'post_status'       => $status,
+			'post_type'         => $post_type,
+			'post_content'      => $post_content,
+			'post_excerpt'      => $raw_excerpt,
+			'post_date_gmt'     => $date,
+			'post_date'         => get_date_from_gmt( $date ),
+			'post_parent'       => $local_parent_id,
+			'menu_order'        => (int) ( $item['menu_order'] ?? 0 ),
+			'comment_status'    => sanitize_key( $item['comment_status'] ?? 'open' ),
+			'ping_status'       => sanitize_key( $item['ping_status'] ?? 'open' ),
 		];
 
 		if ( $this->assign_author_id > 0 ) {
@@ -124,7 +172,20 @@ class WPRestI_Importer {
 				$final_content = '<!-- wp:html -->' . "\n" . $final_content . "\n" . '<!-- /wp:html -->';
 			}
 
-			$update_result = wp_update_post( [ 'ID' => $post_id, 'post_content' => $final_content ], true );
+			$raw_excerpt_final = $raw_excerpt;
+			if ( $raw_excerpt !== '' ) {
+				$raw_excerpt_final = $this->rewrite_and_sideload_images( $item['excerpt']['rendered'] ?? '', $post_id );
+				$raw_excerpt_final = $this->rewrite_internal_links( $raw_excerpt_final );
+			}
+
+			$update_result = wp_update_post(
+				[
+					'ID'           => $post_id,
+					'post_content' => $final_content,
+					'post_excerpt' => $raw_excerpt_final,
+				],
+				true
+			);
 			if ( is_wp_error( $update_result ) ) {
 				return [
 					'title'  => $title,
@@ -135,10 +196,38 @@ class WPRestI_Importer {
 			}
 		}
 
+		if ( $source_id > 0 ) {
+			update_post_meta( $post_id, self::META_SOURCE_ID, $source_id );
+		}
+
+		if ( $source_type !== $post_type ) {
+			update_post_meta( $post_id, '_wpresti_source_post_type', $source_type );
+		}
+
+		if ( 'post' === $post_type ) {
+			if ( ! empty( $item['sticky'] ) ) {
+				stick_post( $post_id );
+			} else {
+				if ( is_sticky( $post_id ) ) {
+					unstick_post( $post_id );
+				}
+			}
+
+			$format = sanitize_key( $item['format'] ?? 'standard' );
+			if ( $format && 'standard' !== $format ) {
+				set_post_format( $post_id, $format );
+			}
+		}
+
 		$this->import_terms( $post_id, $item );
 		$this->import_featured_image( $post_id, $item );
 		$this->import_seo_meta( $post_id, $item );
 		$this->import_author_meta( $post_id, $item );
+		$this->import_custom_meta( $post_id, $item );
+
+		if ( ! empty( $item['link'] ) ) {
+			update_post_meta( $post_id, '_wpresti_source_url', esc_url_raw( $item['link'] ) );
+		}
 
 		update_post_meta( $post_id, '_wpresti_content_type', $content_type );
 
@@ -168,6 +257,12 @@ class WPRestI_Importer {
 			$this->assign_author_id = $user_id;
 		} else {
 			$this->assign_author_id = 0;
+		}
+	}
+
+	public function set_import_mode( string $mode ): void {
+		if ( in_array( $mode, [ 'overwrite', 'new_only', 'update_only' ], true ) ) {
+			$this->import_mode = $mode;
 		}
 	}
 
@@ -243,7 +338,7 @@ class WPRestI_Importer {
 		}
 
 		foreach ( $matches[1] as $src ) {
-			if ( strpos( $src, $this->source_domain ) === false ) {
+			if ( ! $this->should_sideload_image_url( $src ) ) {
 				continue;
 			}
 
@@ -257,6 +352,106 @@ class WPRestI_Importer {
 		}
 
 		return $content;
+	}
+
+	/**
+	 * Whether an image URL from remote content should be sideloaded.
+	 */
+	private function should_sideload_image_url( string $url ): bool {
+		if ( ! $url ) {
+			return false;
+		}
+
+		if ( $this->source_domain && false !== strpos( $url, $this->source_domain ) ) {
+			return true;
+		}
+
+		$host = wp_parse_url( $url, PHP_URL_HOST );
+		if ( $host && $this->source_domain ) {
+			if ( $host === $this->source_domain ) {
+				return true;
+			}
+			$suffix = '.' . $this->source_domain;
+			if ( strlen( $host ) > strlen( $suffix ) && substr( $host, -strlen( $suffix ) ) === $suffix ) {
+				return true;
+			}
+		}
+
+		// Any WordPress-style uploads path, including multisite/CDN hosts such as
+		// cdn.carrot.com/uploads/sites/<id>/<year>/<month>/file.ext.
+		$path = wp_parse_url( $url, PHP_URL_PATH );
+		if ( is_string( $path ) && false !== strpos( $path, '/uploads/' ) ) {
+			return true;
+		}
+
+		return false;
+	}
+
+	private function find_existing_post_id( array $item, string $post_type, string $slug, int $local_parent_id ): int {
+		$source_id = (int) ( $item['id'] ?? 0 );
+
+		if ( $source_id > 0 ) {
+			$by_source = get_posts(
+				[
+					'post_type'      => $post_type,
+					'post_status'    => 'any',
+					'posts_per_page' => 1,
+					'fields'         => 'ids',
+					'meta_key'       => self::META_SOURCE_ID,
+					'meta_value'     => $source_id,
+				]
+			);
+
+			if ( ! empty( $by_source ) ) {
+				return (int) $by_source[0];
+			}
+		}
+
+		if ( '' === $slug ) {
+			return 0;
+		}
+
+		if ( $local_parent_id > 0 ) {
+			$children = get_posts(
+				[
+					'post_type'      => $post_type,
+					'post_status'    => 'any',
+					'post_parent'    => $local_parent_id,
+					'name'           => $slug,
+					'posts_per_page' => 1,
+					'fields'         => 'ids',
+				]
+			);
+
+			if ( ! empty( $children ) ) {
+				return (int) $children[0];
+			}
+
+			return 0;
+		}
+
+		$existing = get_page_by_path( $slug, OBJECT, $post_type );
+
+		return $existing ? (int) $existing->ID : 0;
+	}
+
+	private function resolve_local_parent_id( int $source_parent_id, string $post_type ): int {
+		if ( $source_parent_id <= 0 ) {
+			return 0;
+		}
+
+		$local_parents = get_posts(
+			[
+				'post_type'      => $post_type,
+				'post_status'    => 'any',
+				'posts_per_page' => 1,
+				'fields'         => 'ids',
+				'meta_key'       => self::META_SOURCE_ID,
+				'meta_value'     => $source_parent_id,
+			]
+		);
+
+		return ! empty( $local_parents ) ? (int) $local_parents[0] : 0;
 	}
 
 	private function is_safe_url( string $url ): bool {
@@ -301,7 +496,7 @@ class WPRestI_Importer {
 			return $attachment_id;
 		}
 
-		$attachment_id = media_sideload_image( $image_url, $post_id, '', 'id' );
+		$attachment_id = $this->sideload_with_date( $image_url, $post_id );
 
 		if ( ! is_wp_error( $attachment_id ) ) {
 			update_post_meta( (int) $attachment_id, '_source_url', $image_url );
@@ -312,6 +507,85 @@ class WPRestI_Importer {
 		}
 
 		return $attachment_id;
+	}
+
+	/**
+	 * Download and attach an image, preserving the source's year/month folder
+	 * (e.g. .../2024/10/file.png → uploads/2024/10/file.png) and dating the
+	 * attachment to match. Falls back to the default upload folder when the URL
+	 * carries no date segment.
+	 *
+	 * @return int|WP_Error Attachment ID or error.
+	 */
+	private function sideload_with_date( string $image_url, int $post_id ) {
+		$ym     = $this->date_from_image_url( $image_url );
+		$filter = null;
+
+		if ( $ym ) {
+			$subdir = '/' . $ym[0] . '/' . $ym[1];
+			$filter = static function ( array $dirs ) use ( $subdir ): array {
+				if ( '' === ( $dirs['error'] ?? '' ) || empty( $dirs['error'] ) ) {
+					$dirs['subdir'] = $subdir;
+					$dirs['path']   = $dirs['basedir'] . $subdir;
+					$dirs['url']    = $dirs['baseurl'] . $subdir;
+				}
+				return $dirs;
+			};
+			add_filter( 'upload_dir', $filter );
+		}
+
+		$tmp = download_url( $image_url );
+
+		if ( is_wp_error( $tmp ) ) {
+			if ( $filter ) {
+				remove_filter( 'upload_dir', $filter );
+			}
+			return $tmp;
+		}
+
+		$url_path   = (string) wp_parse_url( $image_url, PHP_URL_PATH );
+		$file_array = [
+			'name'     => wp_basename( '' !== $url_path ? $url_path : $image_url ),
+			'tmp_name' => $tmp,
+		];
+
+		$post_data = [];
+		if ( $ym ) {
+			$date                       = $ym[0] . '-' . $ym[1] . '-01 00:00:00';
+			$post_data['post_date']     = $date;
+			$post_data['post_date_gmt'] = get_gmt_from_date( $date );
+		}
+
+		$attachment_id = media_handle_sideload( $file_array, $post_id, null, $post_data );
+
+		if ( $filter ) {
+			remove_filter( 'upload_dir', $filter );
+		}
+
+		if ( is_wp_error( $attachment_id ) && file_exists( $file_array['tmp_name'] ) ) {
+			wp_delete_file( $file_array['tmp_name'] );
+		}
+
+		return $attachment_id;
+	}
+
+	/**
+	 * Extract a [year, month] pair from a WordPress uploads URL, if present.
+	 *
+	 * @return array{0:string,1:string}|null
+	 */
+	private function date_from_image_url( string $url ): ?array {
+		$path = (string) wp_parse_url( $url, PHP_URL_PATH );
+
+		if ( preg_match( '#/(\d{4})/(\d{2})/#', $path, $m ) ) {
+			$year  = (int) $m[1];
+			$month = (int) $m[2];
+			if ( $year >= 1970 && $year <= 2100 && $month >= 1 && $month <= 12 ) {
+				return [ $m[1], $m[2] ];
+			}
+		}
+
+		return null;
 	}
 
 	private function import_author_meta( int $post_id, array $item ): void {
@@ -648,13 +922,41 @@ class WPRestI_Importer {
 		}
 
 		$description = sanitize_text_field( $yoast['description'] ?? '' );
-		if ( ! $description ) {
+		if ( $description ) {
+			$description = $this->rewrite_internal_links( $description );
+			update_post_meta( $post_id, '_yoast_wpseo_metadesc', $description );
+			update_post_meta( $post_id, 'rank_math_description', $description );
+		}
+
+		$title = sanitize_text_field( $yoast['title'] ?? '' );
+		if ( $title ) {
+			update_post_meta( $post_id, '_yoast_wpseo_title', $title );
+			update_post_meta( $post_id, 'rank_math_title', $title );
+		}
+
+		$og_title = sanitize_text_field( $yoast['og_title'] ?? '' );
+		if ( $og_title ) {
+			update_post_meta( $post_id, '_yoast_wpseo_opengraph-title', $og_title );
+		}
+	}
+
+	private function import_custom_meta( int $post_id, array $item ): void {
+		$meta = $item['meta'] ?? [];
+		if ( ! is_array( $meta ) || empty( $meta ) ) {
 			return;
 		}
 
-		$description = $this->rewrite_internal_links( $description );
+		foreach ( $meta as $key => $value ) {
+			$key = sanitize_key( $key );
+			if ( '' === $key || '_' === $key[0] ) {
+				continue;
+			}
+			if ( is_array( $value ) || is_object( $value ) ) {
+				continue;
+			}
+			update_post_meta( $post_id, $key, sanitize_text_field( (string) $value ) );
+		}
 
-		update_post_meta( $post_id, '_yoast_wpseo_metadesc', $description );
-		update_post_meta( $post_id, 'rank_math_description', $description );
+		do_action( 'wpresti_import_post_meta', $post_id, $item );
 	}
 }
