@@ -40,7 +40,7 @@ class WPRestI_API_Client {
 			return new WP_Error( 'blocked_url', __( 'Request blocked: URL resolves to a private or reserved address.', 'wp-rest-importer' ) );
 		}
 
-		$response = wp_remote_get( $root, $this->build_request_args( 30 ) );
+		$response = $this->request_with_retry( $root, $this->build_request_args( 30 ) );
 
 		if ( is_wp_error( $response ) ) {
 			return $response;
@@ -61,7 +61,7 @@ class WPRestI_API_Client {
 		$has_raw = false;
 		$posts   = $this->fetch_page( 'posts', 1, 1 );
 		if ( ! is_wp_error( $posts ) && ! empty( $posts['items'][0] ) ) {
-			$sample = $posts['items'][0];
+			$sample  = $posts['items'][0];
 			$has_raw = isset( $sample['content']['raw'] ) && '' !== $sample['content']['raw'];
 		}
 
@@ -73,19 +73,61 @@ class WPRestI_API_Client {
 			$page_total = (int) $pages['total'];
 		}
 
+		$types = $this->fetch_post_types();
+
 		return [
-			'ok'          => true,
-			'post_total'  => $post_total,
-			'page_total'  => $page_total,
-			'has_raw'     => $has_raw,
+			'ok'            => true,
+			'post_total'    => $post_total,
+			'page_total'    => $page_total,
+			'has_raw'       => $has_raw,
 			'authenticated' => $this->use_edit_context,
-			'message'     => sprintf(
+			'post_types'    => is_wp_error( $types ) ? [] : $types,
+			'message'       => sprintf(
 				/* translators: 1: post count, 2: page count */
 				__( 'Connected. Found %1$d posts and %2$d pages.', 'wp-rest-importer' ),
 				$post_total,
 				$page_total
 			),
 		];
+	}
+
+	/**
+	 * @return array<int,array<string,mixed>>|WP_Error
+	 */
+	public function fetch_post_types() {
+		$url = $this->site_url . 'wp-json/wp/v2/types';
+
+		if ( ! $this->is_safe_url( $url ) ) {
+			return new WP_Error( 'blocked_url', __( 'Request blocked: URL resolves to a private or reserved address.', 'wp-rest-importer' ) );
+		}
+
+		$response = $this->request_with_retry( $url, $this->build_request_args( 30 ) );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		if ( 200 !== (int) wp_remote_retrieve_response_code( $response ) ) {
+			return new WP_Error( 'bad_response', __( 'Could not fetch post types.', 'wp-rest-importer' ) );
+		}
+
+		$body  = json_decode( wp_remote_retrieve_body( $response ), true );
+		$types = [];
+
+		if ( is_array( $body ) ) {
+			foreach ( $body as $slug => $type ) {
+				if ( ! is_array( $type ) ) {
+					continue;
+				}
+				$types[] = [
+					'slug'      => $slug,
+					'name'      => $type['name'] ?? $slug,
+					'rest_base' => $type['rest_base'] ?? $slug,
+				];
+			}
+		}
+
+		return $types;
 	}
 
 	/**
@@ -111,8 +153,15 @@ class WPRestI_API_Client {
 	}
 
 	/**
-	 * @return array|WP_Error List of items.
+	 * Fetch a page from the media library endpoint.
+	 *
+	 * @param array<string,mixed> $extra_args
+	 * @return array|WP_Error
 	 */
+	public function fetch_media_page( int $page = 1, int $per_page = 100, array $extra_args = [] ) {
+		return $this->fetch_page( 'media', $page, $per_page, $extra_args );
+	}
+
 	/**
 	 * Resolve a taxonomy term ID on the remote site by slug.
 	 */
@@ -137,7 +186,6 @@ class WPRestI_API_Client {
 			return new WP_Error( 'invalid_slug', __( 'Slug is required.', 'wp-rest-importer' ) );
 		}
 
-		// WordPress REST expects slug as an array query param (e.g. slug[]=my-page).
 		$result = $this->request_collection(
 			$post_type,
 			[
@@ -156,7 +204,6 @@ class WPRestI_API_Client {
 			return $items;
 		}
 
-		// Some hosts ignore array slug params — retry scalar form.
 		$retry = $this->request_collection(
 			$post_type,
 			[
@@ -175,7 +222,6 @@ class WPRestI_API_Client {
 			return $items;
 		}
 
-		// Last resort: search then match slug exactly (handles quirky permalink setups).
 		return $this->fetch_by_slug_search_fallback( $post_type, $slug );
 	}
 
@@ -219,12 +265,6 @@ class WPRestI_API_Client {
 	}
 
 	public function fetch_all( string $post_type ) {
-		$endpoint = $this->site_url . 'wp-json/wp/v2/' . rawurlencode( $post_type );
-
-		if ( ! $this->is_safe_url( $endpoint ) ) {
-			return new WP_Error( 'blocked_url', __( 'Request blocked: URL resolves to a private or reserved address.', 'wp-rest-importer' ) );
-		}
-
 		$page      = 1;
 		$all_items = [];
 
@@ -286,7 +326,7 @@ class WPRestI_API_Client {
 			return new WP_Error( 'blocked_url', __( 'Request blocked: URL resolves to a private or reserved address.', 'wp-rest-importer' ) );
 		}
 
-		$response = wp_remote_get( $url, $this->build_request_args( 60 ) );
+		$response = $this->request_with_retry( $url, $this->build_request_args( 60 ) );
 
 		if ( is_wp_error( $response ) ) {
 			return $response;
@@ -310,10 +350,13 @@ class WPRestI_API_Client {
 			);
 		}
 
-		$headers     = wp_remote_retrieve_headers( $response );
-		$total       = (int) ( $headers['x-wp-total'] ?? 0 );
-		$total_pages = min( (int) ( $headers['x-wp-totalpages'] ?? 1 ), 500 );
-		$page_num    = (int) ( $query_args['page'] ?? 1 );
+		$headers          = wp_remote_retrieve_headers( $response );
+		$total            = (int) ( $headers['x-wp-total'] ?? 0 );
+		$reported_pages   = (int) ( $headers['x-wp-totalpages'] ?? 1 );
+		$max_pages        = (int) WPRestI_Settings::get( 'max_rest_pages' );
+		$total_pages      = $max_pages > 0 ? min( $reported_pages, $max_pages ) : $reported_pages;
+		$page_num         = (int) ( $query_args['page'] ?? 1 );
+		$truncated        = $max_pages > 0 && $reported_pages > $max_pages;
 
 		$body  = wp_remote_retrieve_body( $response );
 		$items = json_decode( $body, true );
@@ -327,11 +370,52 @@ class WPRestI_API_Client {
 		}
 
 		return [
-			'items'       => $items,
-			'total'       => $total,
-			'total_pages' => $total_pages,
-			'page'        => $page_num,
+			'items'          => $items,
+			'total'          => $total,
+			'total_pages'    => $total_pages,
+			'reported_pages' => $reported_pages,
+			'truncated'      => $truncated,
+			'page'           => $page_num,
 		];
+	}
+
+	/**
+	 * @param array<string,mixed> $args
+	 * @return array|WP_Error
+	 */
+	private function request_with_retry( string $url, array $args ) {
+		$max_attempts = 4;
+		$delay        = 1;
+
+		for ( $attempt = 1; $attempt <= $max_attempts; $attempt++ ) {
+			$response = wp_remote_get( $url, $args );
+
+			if ( is_wp_error( $response ) ) {
+				if ( $attempt >= $max_attempts ) {
+					return $response;
+				}
+			} else {
+				$code = (int) wp_remote_retrieve_response_code( $response );
+				if ( 200 === $code || 401 === $code || ! in_array( $code, [ 429, 500, 502, 503, 504 ], true ) ) {
+					return $response;
+				}
+				if ( $attempt >= $max_attempts ) {
+					return new WP_Error(
+						'bad_response',
+						sprintf(
+							/* translators: %d: HTTP status code */
+							__( 'Remote server returned HTTP %d after retries.', 'wp-rest-importer' ),
+							$code
+						)
+					);
+				}
+			}
+
+			sleep( $delay );
+			$delay = min( 8, $delay * 2 );
+		}
+
+		return new WP_Error( 'request_failed', __( 'Remote request failed after retries.', 'wp-rest-importer' ) );
 	}
 
 	private function is_safe_url( string $url ): bool {

@@ -12,12 +12,21 @@ class WPRestI_Settings {
 	 */
 	public static function defaults(): array {
 		return [
-			'batch_size'          => 5,
-			'rest_page_size'      => 25,
-			'default_import_mode' => 'overwrite',
-			'ssl_verify'          => true,
-			'email_on_complete'   => false,
-			'rate_limit_per_min'  => 60,
+			'batch_size'           => 5,
+			'rest_page_size'       => 25,
+			'default_import_mode'  => 'overwrite',
+			'ssl_verify'           => true,
+			'email_on_complete'    => false,
+			'rate_limit_per_min'   => 60,
+			'max_rest_pages'       => 0,
+			'max_queue_attempts'   => 3,
+			'meta_allowlist'       => "_thumbnail_id\n_wp_page_template\n_yoast_\nrank_math_\n_acf_",
+			'import_private_meta'  => false,
+			'import_serialized_meta' => true,
+			'import_acf_meta'      => true,
+			'import_page_template' => true,
+			'import_og_image'      => true,
+			'import_media_files'   => true,
 		];
 	}
 
@@ -43,6 +52,24 @@ class WPRestI_Settings {
 	}
 
 	/**
+	 * @return string[]
+	 */
+	public static function meta_allowlist(): array {
+		$raw = (string) self::get( 'meta_allowlist' );
+		$lines = preg_split( '/[\r\n,]+/', $raw, -1, PREG_SPLIT_NO_EMPTY );
+		$out = [];
+
+		foreach ( (array) $lines as $line ) {
+			$line = trim( $line );
+			if ( '' !== $line ) {
+				$out[] = $line;
+			}
+		}
+
+		return $out;
+	}
+
+	/**
 	 * @param array<string,mixed> $input Raw POST/settings input.
 	 * @return array<string,mixed>
 	 */
@@ -61,11 +88,27 @@ class WPRestI_Settings {
 				$out['default_import_mode'] = $mode;
 			}
 		}
-		$out['ssl_verify']        = ! empty( $input['ssl_verify'] );
-		$out['email_on_complete'] = ! empty( $input['email_on_complete'] );
+		if ( isset( $input['max_rest_pages'] ) ) {
+			$out['max_rest_pages'] = max( 0, min( 10000, absint( $input['max_rest_pages'] ) ) );
+		}
+		if ( isset( $input['max_queue_attempts'] ) ) {
+			$out['max_queue_attempts'] = max( 1, min( 10, absint( $input['max_queue_attempts'] ) ) );
+		}
+		if ( isset( $input['meta_allowlist'] ) ) {
+			$out['meta_allowlist'] = sanitize_textarea_field( $input['meta_allowlist'] );
+		}
 		if ( isset( $input['rate_limit_per_min'] ) ) {
 			$out['rate_limit_per_min'] = max( 10, min( 120, absint( $input['rate_limit_per_min'] ) ) );
 		}
+
+		$out['ssl_verify']             = ! empty( $input['ssl_verify'] );
+		$out['email_on_complete']      = ! empty( $input['email_on_complete'] );
+		$out['import_private_meta']  = ! empty( $input['import_private_meta'] );
+		$out['import_serialized_meta'] = ! empty( $input['import_serialized_meta'] );
+		$out['import_acf_meta']        = ! empty( $input['import_acf_meta'] );
+		$out['import_page_template']   = ! empty( $input['import_page_template'] );
+		$out['import_og_image']        = ! empty( $input['import_og_image'] );
+		$out['import_media_files']     = ! empty( $input['import_media_files'] );
 
 		return $out;
 	}

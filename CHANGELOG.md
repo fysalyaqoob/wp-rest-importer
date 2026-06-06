@@ -2,6 +2,34 @@
 
 Production release tracked as **1.0.0** (private distribution, not wordpress.org).
 
+## [1.1.0] - 2026-06-06
+
+### Added
+- Gutenberg block processor using `parse_blocks()` / `serialize_blocks()` for faithful block import
+- Full media migration: srcset, CSS backgrounds, Gutenberg JSON URLs, PDF/video/audio sideloading
+- Featured image alt text, caption, and title preservation
+- SEO social preview (OG) image import
+- Metadata allowlist for private meta keys, serialized/array meta, ACF REST fields
+- Page template and modified date import
+- Term hierarchy and descriptions with source term ID mapping
+- Internal link mapping via `_wpresti_source_url` lookup
+- Dry-run preview mode, incremental sync (`modified_after` filter)
+- Queue claim-after-success with retry and stale-item recovery
+- HTTP retry with backoff for transient remote errors
+- Configurable REST page cap (0 = unlimited)
+- Action Scheduler support when available
+- Author reassignment for all public post types (not just posts/pages)
+- Media sideload failures logged in the import log
+
+### Fixed
+- Gutenberg posts/pages: block JSON attributes (`id`, `url`, `ids`, `images`, `mediaId`) and nested blocks now remap correctly
+- Button and navigation link URLs in block attrs are rewritten without being sideloaded as media
+- Queue items no longer deleted before import completes (prevents data loss on timeout)
+- Fetch progress counter uses `fetched` count instead of `done`
+- Duplicate completion email in background mode
+- `last_error` and auth warnings surfaced in the UI
+- Background import pauses after repeated consecutive errors
+
 ## [1.0.1] - 2026-06-05
 
 ### Fixed

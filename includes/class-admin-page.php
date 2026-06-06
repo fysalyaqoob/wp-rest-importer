@@ -251,6 +251,12 @@ class WPRestI_Admin_Page {
 										</div>
 									</div>
 
+									<div class="pp-field">
+										<label for="pp-modified-after" class="pp-label"><?php esc_html_e( 'Modified after (incremental sync)', 'wp-rest-importer' ); ?></label>
+										<input type="date" id="pp-modified-after" name="pp_modified_after" class="pp-input" />
+										<p class="pp-advanced-hint"><?php esc_html_e( 'Only fetch content changed on the source site after this date.', 'wp-rest-importer' ); ?></p>
+									</div>
+
 									<div class="pp-field-row">
 										<div class="pp-field pp-field-half">
 											<label for="pp-category" class="pp-label"><?php esc_html_e( 'Source category slug', 'wp-rest-importer' ); ?></label>
@@ -360,7 +366,16 @@ class WPRestI_Admin_Page {
 										<span class="pp-toggle-track" aria-hidden="true"></span>
 										<span class="pp-toggle-label">
 											<strong><?php esc_html_e( 'Background import', 'wp-rest-importer' ); ?></strong>
-											<small><?php esc_html_e( 'Runs via WP-Cron — safe to close this tab', 'wp-rest-importer' ); ?></small>
+											<small><?php esc_html_e( 'Runs via WP-Cron or Action Scheduler — safe to close this tab', 'wp-rest-importer' ); ?></small>
+										</span>
+									</label>
+
+									<label class="pp-toggle">
+										<input type="checkbox" id="pp-dry-run" name="pp_dry_run" value="1" />
+										<span class="pp-toggle-track" aria-hidden="true"></span>
+										<span class="pp-toggle-label">
+											<strong><?php esc_html_e( 'Dry run (preview only)', 'wp-rest-importer' ); ?></strong>
+											<small><?php esc_html_e( 'Scan and log what would be imported without creating posts', 'wp-rest-importer' ); ?></small>
 										</span>
 									</label>
 
@@ -498,7 +513,7 @@ class WPRestI_Admin_Page {
 							<span class="dashicons dashicons-admin-users pp-info-icon"></span>
 							<div class="pp-info-text">
 								<strong><?php esc_html_e( 'Author Reassignment', 'wp-rest-importer' ); ?></strong>
-								<p><?php esc_html_e( 'Scan posts and pages imported with WP REST Importer and match original authors to local WordPress users by login name.', 'wp-rest-importer' ); ?></p>
+								<p><?php esc_html_e( 'Scan all imported content (posts, pages, and custom post types) and match original authors to local WordPress users by login name.', 'wp-rest-importer' ); ?></p>
 							</div>
 						</div>
 						<button id="pp-scan-btn" class="pp-btn pp-btn-secondary">
@@ -578,6 +593,45 @@ class WPRestI_Admin_Page {
 						<label class="pp-checkbox-label">
 							<input type="checkbox" name="email_on_complete" value="1" <?php checked( $settings['email_on_complete'] ); ?> />
 							<?php esc_html_e( 'Email admin when background import completes', 'wp-rest-importer' ); ?>
+						</label>
+						<div class="pp-field-row">
+							<div class="pp-field pp-field-half">
+								<label for="pp-set-max-pages" class="pp-label"><?php esc_html_e( 'Max REST pages (0 = unlimited)', 'wp-rest-importer' ); ?></label>
+								<input type="number" min="0" max="10000" id="pp-set-max-pages" name="max_rest_pages" class="pp-input" value="<?php echo esc_attr( (string) $settings['max_rest_pages'] ); ?>" />
+							</div>
+							<div class="pp-field pp-field-half">
+								<label for="pp-set-max-attempts" class="pp-label"><?php esc_html_e( 'Max queue retries per item', 'wp-rest-importer' ); ?></label>
+								<input type="number" min="1" max="10" id="pp-set-max-attempts" name="max_queue_attempts" class="pp-input" value="<?php echo esc_attr( (string) $settings['max_queue_attempts'] ); ?>" />
+							</div>
+						</div>
+						<div class="pp-field">
+							<label for="pp-set-meta-allowlist" class="pp-label"><?php esc_html_e( 'Private meta allowlist', 'wp-rest-importer' ); ?></label>
+							<textarea id="pp-set-meta-allowlist" name="meta_allowlist" class="pp-input pp-textarea" rows="4"><?php echo esc_textarea( $settings['meta_allowlist'] ); ?></textarea>
+							<p class="pp-advanced-hint"><?php esc_html_e( 'One key or prefix per line (use * for wildcard, e.g. _acf_*).', 'wp-rest-importer' ); ?></p>
+						</div>
+						<label class="pp-checkbox-label">
+							<input type="checkbox" name="import_serialized_meta" value="1" <?php checked( $settings['import_serialized_meta'] ); ?> />
+							<?php esc_html_e( 'Import array/serialized meta values', 'wp-rest-importer' ); ?>
+						</label>
+						<label class="pp-checkbox-label">
+							<input type="checkbox" name="import_acf_meta" value="1" <?php checked( $settings['import_acf_meta'] ); ?> />
+							<?php esc_html_e( 'Import ACF fields when exposed via REST', 'wp-rest-importer' ); ?>
+						</label>
+						<label class="pp-checkbox-label">
+							<input type="checkbox" name="import_page_template" value="1" <?php checked( $settings['import_page_template'] ); ?> />
+							<?php esc_html_e( 'Import page templates', 'wp-rest-importer' ); ?>
+						</label>
+						<label class="pp-checkbox-label">
+							<input type="checkbox" name="import_og_image" value="1" <?php checked( $settings['import_og_image'] ); ?> />
+							<?php esc_html_e( 'Import SEO social preview images', 'wp-rest-importer' ); ?>
+						</label>
+						<label class="pp-checkbox-label">
+							<input type="checkbox" name="import_media_files" value="1" <?php checked( $settings['import_media_files'] ); ?> />
+							<?php esc_html_e( 'Sideload PDFs, video, and audio file links', 'wp-rest-importer' ); ?>
+						</label>
+						<label class="pp-checkbox-label">
+							<input type="checkbox" name="import_private_meta" value="1" <?php checked( $settings['import_private_meta'] ); ?> />
+							<?php esc_html_e( 'Import all private meta keys (overrides allowlist)', 'wp-rest-importer' ); ?>
 						</label>
 						<button type="submit" id="pp-save-settings" class="pp-btn pp-btn-primary">
 							<?php esc_html_e( 'Save Settings', 'wp-rest-importer' ); ?>

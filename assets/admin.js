@@ -106,11 +106,15 @@
             body.append('slug', slugVal);
         }
         if (!isSlugImportScope() && !slugVal) {
-            body.append('date_after',    (document.getElementById('pp-date-after') || {}).value || '');
-            body.append('date_before',   (document.getElementById('pp-date-before') || {}).value || '');
-            body.append('category',      (document.getElementById('pp-category') || {}).value.trim());
-            body.append('status_filter', (document.getElementById('pp-status-filter') || {}).value || '');
-            body.append('cpt_rest_base', (document.getElementById('pp-cpt-rest-base') || {}).value.trim());
+            body.append('date_after',      (document.getElementById('pp-date-after') || {}).value || '');
+            body.append('date_before',     (document.getElementById('pp-date-before') || {}).value || '');
+            body.append('modified_after',  (document.getElementById('pp-modified-after') || {}).value || '');
+            body.append('category',        (document.getElementById('pp-category') || {}).value.trim());
+            body.append('status_filter',   (document.getElementById('pp-status-filter') || {}).value || '');
+            body.append('cpt_rest_base',   (document.getElementById('pp-cpt-rest-base') || {}).value.trim());
+        }
+        if (document.getElementById('pp-dry-run') && document.getElementById('pp-dry-run').checked) {
+            body.append('dry_run', '1');
         }
         body.append('source_username',     ((document.getElementById('pp-source-username') || {}).value || '').trim());
         body.append('source_app_password', (document.getElementById('pp-source-app-password') || {}).value || '');
@@ -424,6 +428,15 @@
         skipped  = data.skipped || 0;
         if (data.log_total !== undefined) logTotal = data.log_total;
         if (data.message) showNotice('info', data.message);
+        if (data.auth_warning) {
+            showNotice('warning', 'Authentication failed — using public API. Draft/private content and raw Gutenberg blocks may be missing.');
+        }
+        if (data.last_error) {
+            showNotice('error', data.last_error);
+        }
+        if (data.dry_run) {
+            showNotice('info', 'Dry run mode — no posts are being created.');
+        }
         if (data.elapsed && elapsedTxt) elapsedTxt.textContent = data.elapsed;
         updateProgress();
         appendLogRows(data.log || [], 'prepend');
@@ -467,6 +480,13 @@
                     logBody.innerHTML = '';
                     logShown = 0;
                     appendLogRows(resp.data.log.slice().reverse(), 'prepend');
+                }
+
+                if (resp.data.auth_warning) {
+                    showNotice('warning', 'Authentication failed — using public API. Draft/private content may be missing.');
+                }
+                if (resp.data.last_error) {
+                    showNotice('error', resp.data.last_error);
                 }
 
                 if (resp.data.complete || resp.data.phase === 'complete') {
@@ -529,6 +549,12 @@
         if (!settingsForm.querySelector('[name="email_on_complete"]').checked) {
             body.delete('email_on_complete');
         }
+        ['import_serialized_meta', 'import_acf_meta', 'import_page_template', 'import_og_image', 'import_media_files', 'import_private_meta'].forEach(function (name) {
+            var el = settingsForm.querySelector('[name="' + name + '"]');
+            if (el && !el.checked) {
+                body.delete(name);
+            }
+        });
 
         fetch(wprestiData.ajaxUrl, { method: 'POST', body: body })
             .then(function (r) { return r.json(); })

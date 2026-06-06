@@ -3,7 +3,7 @@
  * Plugin Name: WP REST Importer
  * Plugin URI:  https://github.com/fysalyaqoob/wp-rest-importer
  * Description: Import posts, pages, media, categories, tags and authors from any public WordPress site via REST API.
- * Version:     1.0.1
+ * Version:     1.1.0
  * Author:      Faisal Yaqoob
  * Author URI:  https://fysalyaqoob.com
  * License:     GPL2
@@ -38,13 +38,18 @@ add_filter( 'http_request_args', function( $args, $url ) {
 	return $args;
 }, 10, 2 );
 
-define( 'WPRESTI_VERSION', '1.0.1' );
+define( 'WPRESTI_VERSION', '1.1.0' );
 define( 'WPRESTI_DIR', plugin_dir_path( __FILE__ ) );
 define( 'WPRESTI_URL', plugin_dir_url( __FILE__ ) );
 
 require_once WPRESTI_DIR . 'includes/class-settings.php';
 require_once WPRESTI_DIR . 'includes/class-api-client.php';
 require_once WPRESTI_DIR . 'includes/class-queue-store.php';
+require_once WPRESTI_DIR . 'includes/class-importer-links.php';
+require_once WPRESTI_DIR . 'includes/class-importer-media.php';
+require_once WPRESTI_DIR . 'includes/class-importer-meta.php';
+require_once WPRESTI_DIR . 'includes/class-importer-terms.php';
+require_once WPRESTI_DIR . 'includes/class-importer-gutenberg.php';
 require_once WPRESTI_DIR . 'includes/class-importer.php';
 require_once WPRESTI_DIR . 'includes/class-import-runner.php';
 require_once WPRESTI_DIR . 'includes/class-background.php';

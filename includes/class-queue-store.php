@@ -5,15 +5,15 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 /**
  * Persists import queue items and log rows in custom tables (not wp_options).
- *
- * wp_options is only suitable for small metadata; post payloads for thousands of
- * items exceed option size limits and slow every read/write.
  */
 class WPRestI_Queue_Store {
 
-	public const DB_VERSION     = 1;
+	public const DB_VERSION     = 2;
 	public const OPTION_DB_VER  = 'wpresti_db_version';
 	public const REST_PAGE_SIZE = 25;
+	public const STATUS_PENDING    = 'pending';
+	public const STATUS_PROCESSING = 'processing';
+	public const STATUS_FAILED     = 'failed';
 
 	/**
 	 * Create or upgrade custom tables.
@@ -28,18 +28,21 @@ class WPRestI_Queue_Store {
 		$sql = "CREATE TABLE {$queue} (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			session_id varchar(32) NOT NULL,
-			post_type varchar(20) NOT NULL,
+			post_type varchar(64) NOT NULL,
 			source_parent bigint(20) unsigned NOT NULL DEFAULT 0,
 			source_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			status varchar(20) NOT NULL DEFAULT 'pending',
+			attempts tinyint(3) unsigned NOT NULL DEFAULT 0,
+			claimed_at int(10) unsigned NOT NULL DEFAULT 0,
 			payload longtext NOT NULL,
 			PRIMARY KEY  (id),
-			KEY session_sort (session_id, source_parent, source_id)
+			KEY session_sort (session_id, status, source_parent, source_id)
 		) {$charset};
 		CREATE TABLE {$log} (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			session_id varchar(32) NOT NULL,
 			title varchar(500) NOT NULL DEFAULT '',
-			item_type varchar(20) NOT NULL DEFAULT '',
+			item_type varchar(64) NOT NULL DEFAULT '',
 			format varchar(50) NOT NULL DEFAULT '',
 			status varchar(255) NOT NULL DEFAULT '',
 			action varchar(20) NOT NULL DEFAULT '',
@@ -108,12 +111,15 @@ class WPRestI_Queue_Store {
 				$table,
 				[
 					'session_id'    => $session_id,
-					'post_type'     => $post_type,
+					'post_type'     => mb_substr( (string) $post_type, 0, 64 ),
 					'source_parent' => (int) ( $data['parent'] ?? 0 ),
 					'source_id'     => (int) ( $data['id'] ?? 0 ),
+					'status'        => self::STATUS_PENDING,
+					'attempts'      => 0,
+					'claimed_at'    => 0,
 					'payload'       => $payload,
 				],
-				[ '%s', '%s', '%d', '%d', '%s' ]
+				[ '%s', '%s', '%d', '%d', '%s', '%d', '%d', '%s' ]
 			);
 
 			if ( false !== $wpdb->insert_id ) {
@@ -133,8 +139,33 @@ class WPRestI_Queue_Store {
 
 		return (int) $wpdb->get_var(
 			$wpdb->prepare(
-				'SELECT COUNT(*) FROM ' . $this->queue_table() . ' WHERE session_id = %s',
+				"SELECT COUNT(*) FROM {$this->queue_table()} WHERE session_id = %s AND status IN ('pending','processing')",
 				$session_id
+			)
+		);
+	}
+
+	/**
+	 * Reset items stuck in processing (crash/timeout recovery).
+	 */
+	public function reset_stale_processing( string $session_id, int $max_age_seconds = 300 ): void {
+		global $wpdb;
+
+		if ( '' === $session_id ) {
+			return;
+		}
+
+		$cutoff = time() - max( 60, $max_age_seconds );
+		$table  = $this->queue_table();
+
+		$wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$table} SET status = %s, claimed_at = 0
+				WHERE session_id = %s AND status = %s AND claimed_at > 0 AND claimed_at < %d",
+				self::STATUS_PENDING,
+				$session_id,
+				self::STATUS_PROCESSING,
+				$cutoff
 			)
 		);
 	}
@@ -149,14 +180,17 @@ class WPRestI_Queue_Store {
 			return [];
 		}
 
+		$this->reset_stale_processing( $session_id );
+
 		$table = $this->queue_table();
 		$rows  = $wpdb->get_results(
 			$wpdb->prepare(
 				"SELECT id, post_type, payload FROM {$table}
-				WHERE session_id = %s
+				WHERE session_id = %s AND status = %s
 				ORDER BY source_parent ASC, source_id ASC
 				LIMIT %d",
 				$session_id,
+				self::STATUS_PENDING,
 				$limit
 			),
 			ARRAY_A
@@ -167,34 +201,95 @@ class WPRestI_Queue_Store {
 		}
 
 		$batch = [];
-		$ids   = [];
+		$now   = time();
 
 		foreach ( $rows as $row ) {
-			$data = json_decode( $row['payload'], true );
+			$row_id = (int) $row['id'];
+			$data   = json_decode( $row['payload'], true );
+
 			if ( ! is_array( $data ) ) {
-				$ids[] = (int) $row['id'];
+				$this->complete_item( $row_id );
 				continue;
 			}
 
+			$wpdb->update(
+				$table,
+				[
+					'status'     => self::STATUS_PROCESSING,
+					'claimed_at' => $now,
+				],
+				[ 'id' => $row_id ],
+				[ '%s', '%d' ],
+				[ '%d' ]
+			);
+
 			$batch[] = [
-				'row_id'    => (int) $row['id'],
+				'row_id'    => $row_id,
 				'data'      => $data,
 				'post_type' => $row['post_type'],
 			];
-			$ids[]   = (int) $row['id'];
-		}
-
-		if ( ! empty( $ids ) ) {
-			$placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
-			$wpdb->query(
-				$wpdb->prepare(
-					"DELETE FROM {$table} WHERE id IN ({$placeholders})",
-					...$ids
-				)
-			);
 		}
 
 		return $batch;
+	}
+
+	public function complete_item( int $row_id ): void {
+		global $wpdb;
+
+		if ( $row_id < 1 ) {
+			return;
+		}
+
+		$wpdb->delete( $this->queue_table(), [ 'id' => $row_id ], [ '%d' ] );
+	}
+
+	public function release_item( int $row_id, bool $permanent_failure = false ): void {
+		global $wpdb;
+
+		if ( $row_id < 1 ) {
+			return;
+		}
+
+		$table = $this->queue_table();
+		$max   = max( 1, (int) WPRestI_Settings::get( 'max_queue_attempts' ) );
+
+		$row = $wpdb->get_row(
+			$wpdb->prepare( "SELECT attempts FROM {$table} WHERE id = %d", $row_id ),
+			ARRAY_A
+		);
+
+		if ( ! $row ) {
+			return;
+		}
+
+		$attempts = (int) ( $row['attempts'] ?? 0 ) + 1;
+
+		if ( $permanent_failure || $attempts >= $max ) {
+			$wpdb->update(
+				$table,
+				[
+					'status'     => self::STATUS_FAILED,
+					'attempts'   => $attempts,
+					'claimed_at' => 0,
+				],
+				[ 'id' => $row_id ],
+				[ '%s', '%d', '%d' ],
+				[ '%d' ]
+			);
+			return;
+		}
+
+		$wpdb->update(
+			$table,
+			[
+				'status'     => self::STATUS_PENDING,
+				'attempts'   => $attempts,
+				'claimed_at' => 0,
+			],
+			[ 'id' => $row_id ],
+			[ '%s', '%d', '%d' ],
+			[ '%d' ]
+		);
 	}
 
 	/**

@@ -83,18 +83,21 @@ class WPRestI_Import_Runner {
 			}
 
 			if ( ! empty( $fetch_result['auth_retry'] ) ) {
+				$progress['auth_warning'] = true;
 				delete_transient( 'wpresti_step_lock' );
 				$this->save_progress( $progress );
 				return [
 					'fetch_complete' => false,
 					'complete'       => false,
 					'done'           => (int) $progress['done'],
+					'fetched'        => (int) ( $progress['fetched'] ?? 0 ),
 					'total'          => (int) $progress['total'],
 					'queued'         => $this->store->count_pending( $session_id ),
 					'log'            => [],
 					'log_total'      => $this->store->count_logs( $session_id ),
-					'message'        => __( 'Authentication failed; continuing with public API…', 'wp-rest-importer' ),
+					'message'        => __( 'Authentication failed; continuing with public API. Draft/private content and raw Gutenberg blocks may be missing.', 'wp-rest-importer' ),
 					'auth_retry'     => true,
+					'auth_warning'   => true,
 				];
 			}
 
@@ -120,7 +123,7 @@ class WPRestI_Import_Runner {
 				)
 				: sprintf(
 					__( 'Loaded %1$d of %2$d from remote site…', 'wp-rest-importer' ),
-					(int) $progress['done'],
+					(int) ( $progress['fetched'] ?? 0 ),
 					(int) $progress['total']
 				);
 		}
@@ -150,6 +153,7 @@ class WPRestI_Import_Runner {
 			'complete'       => $is_complete,
 			'cancelled'      => false,
 			'done'           => (int) $progress['done'],
+			'fetched'        => (int) ( $progress['fetched'] ?? 0 ),
 			'total'          => (int) $progress['total'],
 			'queued'         => $pending,
 			'skipped'        => (int) ( $progress['skipped'] ?? 0 ),
@@ -157,6 +161,9 @@ class WPRestI_Import_Runner {
 			'log_total'      => $this->store->count_logs( $session_id ),
 			'message'        => $message,
 			'elapsed'        => $this->elapsed_label( $progress ),
+			'auth_warning'   => ! empty( $progress['auth_warning'] ),
+			'last_error'     => (string) ( $progress['last_error'] ?? '' ),
+			'dry_run'        => ! empty( $progress['dry_run'] ),
 		];
 	}
 
@@ -212,6 +219,7 @@ class WPRestI_Import_Runner {
 			$progress['slug_import'] = true;
 			$progress['slugs']       = $slugs;
 			$progress['total']       = $queued;
+			$progress['fetched']     = $queued;
 
 			if ( ! empty( $params['run_in_background'] ) ) {
 				$progress['background'] = true;
@@ -378,6 +386,8 @@ class WPRestI_Import_Runner {
 		$cpt_rest_base       = sanitize_key( wp_unslash( $post_data['cpt_rest_base'] ?? '' ) );
 		$target_post_type    = sanitize_key( wp_unslash( $post_data['target_post_type'] ?? '' ) );
 		$run_in_background   = ! empty( $post_data['run_in_background'] );
+		$dry_run             = ! empty( $post_data['dry_run'] );
+		$modified_after      = sanitize_text_field( wp_unslash( $post_data['modified_after'] ?? '' ) );
 
 		if ( $target_post_type && ! post_type_exists( $target_post_type ) ) {
 			return new WP_Error(
@@ -433,6 +443,8 @@ class WPRestI_Import_Runner {
 			'target_post_type'    => $target_post_type,
 			'run_in_background'   => $run_in_background,
 			'import_scope'        => $import_scope,
+			'dry_run'             => $dry_run,
+			'modified_after'      => $modified_after,
 		];
 	}
 
@@ -490,6 +502,8 @@ class WPRestI_Import_Runner {
 			'cpt_rest_base'       => $progress['cpt_rest_base'] ?? '',
 			'target_post_type'    => $progress['target_post_type'] ?? '',
 			'run_in_background'   => ! empty( $progress['background'] ),
+			'dry_run'             => ! empty( $progress['dry_run'] ),
+			'modified_after'      => $progress['modified_after'] ?? '',
 		];
 
 		$creds = self::get_session_credentials( $session_id );
@@ -692,6 +706,9 @@ class WPRestI_Import_Runner {
 		if ( ! empty( $params['status_filter'] ) ) {
 			$query['status'] = $params['status_filter'];
 		}
+		if ( ! empty( $params['modified_after'] ) ) {
+			$query['modified_after'] = gmdate( 'c', strtotime( $params['modified_after'] . ' 00:00:00 UTC' ) );
+		}
 		return apply_filters( 'wpresti_rest_query_args', $query, $params );
 	}
 
@@ -707,10 +724,27 @@ class WPRestI_Import_Runner {
 		$importer->set_source_url( $progress['site_url'] ?? '' );
 		$importer->set_assign_author( (int) ( $progress['assign_author_id'] ?? 0 ) );
 		$importer->set_import_mode( $progress['import_mode'] ?? 'overwrite' );
+		$importer->set_dry_run( ! empty( $progress['dry_run'] ) );
+		$importer->set_media_failure_logger(
+			function ( string $url, string $error ) use ( $session_id, &$batch_log_ref ) {
+				$entry = [
+					'title'  => mb_substr( $url, 0, 120 ),
+					'type'   => 'media',
+					'format' => '',
+					'status' => 'Media error: ' . $error,
+					'action' => 'Media',
+					'time'   => current_time( 'H:i:s' ),
+				];
+				$this->store->insert_log( $session_id, $entry );
+				$batch_log_ref[] = $entry;
+			}
+		);
 
-		$batch_log = [];
+		$batch_log     = [];
+		$batch_log_ref = &$batch_log;
 
 		foreach ( $batch as $item_wrapper ) {
+			$row_id      = (int) $item_wrapper['row_id'];
 			$source_type = $item_wrapper['post_type'];
 			$local_type  = $this->resolve_local_post_type( $source_type, $progress );
 			$item        = apply_filters( 'wpresti_item_data', $item_wrapper['data'], $source_type, $progress );
@@ -722,10 +756,22 @@ class WPRestI_Import_Runner {
 				$result['type'] = $source_type . ' → ' . $local_type;
 			}
 
-			if ( 'Skipped' === ( $result['action'] ?? '' ) ) {
-				$progress['skipped'] = (int) ( $progress['skipped'] ?? 0 ) + 1;
+			$action = $result['action'] ?? '';
+			if ( 'Error' === $action ) {
+				$this->store->release_item( $row_id, true );
+				$progress['consecutive_errors'] = (int) ( $progress['consecutive_errors'] ?? 0 ) + 1;
+			} elseif ( 'Skipped' === $action || 'Dry-run' === $action ) {
+				$this->store->complete_item( $row_id );
+				if ( 'Skipped' === $action ) {
+					$progress['skipped'] = (int) ( $progress['skipped'] ?? 0 ) + 1;
+				} else {
+					$progress['done']++;
+				}
+				$progress['consecutive_errors'] = 0;
 			} else {
+				$this->store->complete_item( $row_id );
 				$progress['done']++;
+				$progress['consecutive_errors'] = 0;
 			}
 
 			$batch_log[] = $result;
@@ -733,6 +779,8 @@ class WPRestI_Import_Runner {
 
 			do_action( 'wpresti_after_import_item', $result, $item, $progress );
 		}
+
+		unset( $batch_log_ref );
 
 		return $batch_log;
 	}
@@ -805,7 +853,12 @@ class WPRestI_Import_Runner {
 			];
 		}
 
-		$this->store->enqueue_many( $progress['session_id'], $items );
+		$enqueued = $this->store->enqueue_many( $progress['session_id'], $items );
+		$progress['fetched'] = (int) ( $progress['fetched'] ?? 0 ) + $enqueued;
+
+		if ( ! empty( $page_data['truncated'] ) ) {
+			$progress['fetch_truncated'] = true;
+		}
 
 		if ( 1 === $page ) {
 			$fetch_state['expected_total'] = (int) ( $fetch_state['expected_total'] ?? 0 ) + (int) $page_data['total'];
@@ -953,8 +1006,11 @@ class WPRestI_Import_Runner {
 			'cpt_rest_base'    => $params['cpt_rest_base'],
 			'target_post_type' => $params['target_post_type'],
 			'total'            => 0,
+			'fetched'          => 0,
 			'done'             => 0,
 			'skipped'          => 0,
+			'dry_run'          => ! empty( $params['dry_run'] ),
+			'modified_after'   => $params['modified_after'] ?? '',
 			'complete'         => false,
 			'cancelled'        => false,
 			'fetch_complete'   => $fetch_complete,
@@ -1072,6 +1128,8 @@ class WPRestI_Import_Runner {
 			'title'          => [ 'rendered' => $item['title']['rendered'] ?? '' ],
 			'status'         => $item['status'] ?? 'publish',
 			'date_gmt'       => $item['date_gmt'] ?? '',
+			'modified_gmt'   => $item['modified_gmt'] ?? '',
+			'template'       => $item['template'] ?? '',
 			'menu_order'     => (int) ( $item['menu_order'] ?? 0 ),
 			'comment_status' => $item['comment_status'] ?? 'open',
 			'ping_status'    => $item['ping_status'] ?? 'open',
@@ -1090,9 +1148,15 @@ class WPRestI_Import_Runner {
 			$out['content']['rendered'] = $item['content']['rendered'] ?? '';
 		}
 
-		if ( isset( $item['_embedded']['wp:featuredmedia'][0]['source_url'] ) ) {
+		if ( isset( $item['_embedded']['wp:featuredmedia'][0] ) ) {
+			$fm = $item['_embedded']['wp:featuredmedia'][0];
 			$out['_embedded']['wp:featuredmedia'] = [
-				[ 'source_url' => $item['_embedded']['wp:featuredmedia'][0]['source_url'] ],
+				[
+					'source_url' => $fm['source_url'] ?? '',
+					'alt_text'   => $fm['alt_text'] ?? '',
+					'title'      => [ 'rendered' => $fm['title']['rendered'] ?? '' ],
+					'caption'    => [ 'rendered' => $fm['caption']['rendered'] ?? '' ],
+				],
 			];
 		}
 
@@ -1113,9 +1177,12 @@ class WPRestI_Import_Runner {
 				$slim = [];
 				foreach ( (array) $group as $t ) {
 					$slim[] = [
-						'taxonomy' => $t['taxonomy'] ?? '',
-						'name'     => $t['name'] ?? '',
-						'slug'     => $t['slug'] ?? '',
+						'id'          => (int) ( $t['id'] ?? 0 ),
+						'parent'      => (int) ( $t['parent'] ?? 0 ),
+						'taxonomy'    => $t['taxonomy'] ?? '',
+						'name'        => $t['name'] ?? '',
+						'slug'        => $t['slug'] ?? '',
+						'description' => $t['description'] ?? '',
 					];
 				}
 				$terms[] = $slim;
@@ -1131,6 +1198,10 @@ class WPRestI_Import_Runner {
 				'og_title'    => $y['og_title'] ?? '',
 				'og_image'    => is_array( $y['og_image'] ?? null ) ? ( $y['og_image'][0]['url'] ?? '' ) : ( $y['og_image'] ?? '' ),
 			];
+		}
+
+		if ( isset( $item['acf'] ) && is_array( $item['acf'] ) ) {
+			$out['acf'] = $item['acf'];
 		}
 
 		return apply_filters( 'wpresti_trim_queue_item', $out, $item );

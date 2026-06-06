@@ -111,12 +111,16 @@ class WPRestI_Ajax_Handler {
 				'phase'          => $phase,
 				'fetch_complete' => $fetch_complete,
 				'done'           => (int) ( $progress['done'] ?? 0 ),
+				'fetched'        => (int) ( $progress['fetched'] ?? 0 ),
 				'total'          => (int) ( $progress['total'] ?? 0 ),
 				'queued'         => $pending,
 				'skipped'        => (int) ( $progress['skipped'] ?? 0 ),
 				'complete'       => $complete,
 				'background'     => ! empty( $progress['background'] ),
 				'slug_import'    => ! empty( $progress['slug_import'] ),
+				'dry_run'        => ! empty( $progress['dry_run'] ),
+				'auth_warning'   => ! empty( $progress['auth_warning'] ),
+				'last_error'     => (string) ( $progress['last_error'] ?? '' ),
 				'log'            => $session_id
 					? $store->get_logs( $session_id, 0, 50 )
 					: [],
@@ -188,13 +192,19 @@ class WPRestI_Ajax_Handler {
 	public function handle_reassign_scan(): void {
 		$this->verify_request();
 
-		$groups = [];
-		$paged  = 1;
+		$groups     = [];
+		$paged      = 1;
+		$post_types = array_values(
+			array_diff(
+				get_post_types( [ 'public' => true ], 'names' ),
+				[ 'attachment' ]
+			)
+		);
 
 		do {
 			$posts = get_posts(
 				[
-					'post_type'      => [ 'post', 'page' ],
+					'post_type'      => $post_types,
 					'post_status'    => 'any',
 					'posts_per_page' => 500,
 					'paged'          => $paged,
@@ -257,10 +267,17 @@ class WPRestI_Ajax_Handler {
 		$unmatched  = 0;
 		$paged      = 1;
 
+		$post_types = array_values(
+			array_diff(
+				get_post_types( [ 'public' => true ], 'names' ),
+				[ 'attachment' ]
+			)
+		);
+
 		do {
 			$posts = get_posts(
 				[
-					'post_type'      => [ 'post', 'page' ],
+					'post_type'      => $post_types,
 					'post_status'    => 'any',
 					'posts_per_page' => 500,
 					'paged'          => $paged,
